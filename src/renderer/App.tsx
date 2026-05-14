@@ -1,5 +1,5 @@
 import { useMemo, useState, useEffect } from 'react';
-import { ExternalLink, FolderOpen, RefreshCw, Search, Settings, Copy, GitBranch, ChevronRight, ChevronDown } from 'lucide-react';
+import { ArrowDown, ArrowUp, ArrowUpDown, Copy, ExternalLink, FolderOpen, GitBranch, RefreshCw, Search, Settings } from 'lucide-react';
 import type { DirectoryNode, ManagerState, TableChartRow } from '../shared/types';
 import { findSimilarRows, rowMatchesSearch, statusClass } from '../shared/domain';
 
@@ -9,14 +9,32 @@ type ContextMenuState = {
   row: TableChartRow;
 } | null;
 
+type SortKey = 'level' | 'songLevel' | 'title' | 'artist' | 'url1' | 'url2' | 'status' | 'notes' | 'tableName' | 'path';
+type SortDirection = 'asc' | 'desc';
+type SortState = { key: SortKey; direction: SortDirection };
+
+const defaultSort: SortState = { key: 'title', direction: 'asc' };
+const statusOrder = new Map<string, number>([
+  ['NO SONG', 0],
+  ['NO PLAY', 1],
+  ['FAILED', 2],
+  ['ASSIST CLEAR', 3],
+  ['EASY CLEAR', 4],
+  ['CLEAR', 5],
+  ['HARD CLEAR', 6],
+  ['EX HARD CLEAR', 7],
+  ['FULL COMBO', 8]
+]);
+
 export function App(): JSX.Element {
   const [state, setState] = useState<ManagerState | null>(null);
   const [loading, setLoading] = useState(true);
   const [searchText, setSearchText] = useState('');
   const [selectedTableId, setSelectedTableId] = useState<string | null>(null);
+  const [selectedBmsRoot, setSelectedBmsRoot] = useState<DirectoryNode | null>(null);
+  const [sort, setSort] = useState<SortState>(defaultSort);
   const [contextMenu, setContextMenu] = useState<ContextMenuState>(null);
   const [similarTarget, setSimilarTarget] = useState<TableChartRow | null>(null);
-  const [expanded, setExpanded] = useState<Record<string, DirectoryNode[]>>({});
 
   useEffect(() => {
     void load();
@@ -28,6 +46,7 @@ export function App(): JSX.Element {
     setState(next);
     setSearchText(next.settings.searchText ?? '');
     setSelectedTableId(next.settings.selectedTableId ?? next.tables[0]?.id ?? null);
+    setSelectedBmsRoot(null);
     setLoading(false);
   }
 
@@ -37,19 +56,24 @@ export function App(): JSX.Element {
   }
 
   const visibleRows = useMemo(() => {
-    const rows = state?.rows ?? [];
-    return rows.filter((row) => {
-      const tableOk = selectedTableId ? row.tableId === selectedTableId : true;
+    const sourceRows = selectedBmsRoot
+      ? (state?.libraryRows ?? []).filter((row) => isRowUnderRoot(row, selectedBmsRoot.path))
+      : state?.rows ?? [];
+
+    const filteredRows = sourceRows.filter((row) => {
+      const tableOk = selectedBmsRoot || !selectedTableId ? true : row.tableId === selectedTableId;
       return tableOk && rowMatchesSearch(row, searchText);
     });
-  }, [state, selectedTableId, searchText]);
+
+    return sortRows(filteredRows, sort);
+  }, [state, selectedTableId, selectedBmsRoot, searchText, sort]);
 
   const similarRows = useMemo(() => {
     if (!state || !similarTarget) return [];
-    return findSimilarRows(similarTarget, state.rows);
-  }, [state, similarTarget]);
+    return sortRows(findSimilarRows(similarTarget, state.rows), sort);
+  }, [state, similarTarget, sort]);
 
-  const activeTable = state?.tables.find((table) => table.id === selectedTableId) ?? null;
+  const activeTable = !selectedBmsRoot ? state?.tables.find((table) => table.id === selectedTableId) ?? null : null;
 
   async function chooseRoot(): Promise<void> {
     const root = await window.managerApi.chooseRoot();
@@ -61,8 +85,14 @@ export function App(): JSX.Element {
   }
 
   async function selectTable(tableId: string | null): Promise<void> {
+    setSelectedBmsRoot(null);
     setSelectedTableId(tableId);
     await saveSettings({ selectedTableId: tableId });
+  }
+
+  function selectBmsRoot(node: DirectoryNode): void {
+    setSelectedBmsRoot(node);
+    setSelectedTableId(null);
   }
 
   async function updateSearch(value: string): Promise<void> {
@@ -70,17 +100,11 @@ export function App(): JSX.Element {
     await saveSettings({ searchText: value });
   }
 
-  async function expandDirectory(node: DirectoryNode): Promise<void> {
-    if (expanded[node.path]) {
-      setExpanded((current) => {
-        const next = { ...current };
-        delete next[node.path];
-        return next;
-      });
-      return;
-    }
-    const children = await window.managerApi.listDirectories(node.path);
-    setExpanded((current) => ({ ...current, [node.path]: children }));
+  function toggleSort(key: SortKey): void {
+    setSort((current) => ({
+      key,
+      direction: current.key === key && current.direction === 'asc' ? 'desc' : 'asc'
+    }));
   }
 
   function openContextMenu(event: React.MouseEvent, row: TableChartRow): void {
@@ -120,13 +144,13 @@ export function App(): JSX.Element {
         <aside className="sidebar">
           <section className="panel sidebar-section table-section">
             <div className="panel-title">Tables</div>
-            <button className={`tree-row ${selectedTableId === null ? 'selected' : ''}`} onClick={() => void selectTable(null)}>
+            <button className={`tree-row ${!selectedBmsRoot && selectedTableId === null ? 'selected' : ''}`} onClick={() => void selectTable(null)}>
               <span>All Tables</span>
               <small>{state.rows.length}</small>
             </button>
             <div className="table-list">
               {state.tables.map((table) => (
-                <button key={table.id} className={`tree-row ${table.id === selectedTableId ? 'selected' : ''}`} onClick={() => void selectTable(table.id)} title={table.name}>
+                <button key={table.id} className={`tree-row ${!selectedBmsRoot && table.id === selectedTableId ? 'selected' : ''}`} onClick={() => void selectTable(table.id)} title={table.name}>
                   <span>{table.name}</span>
                   <small>{table.chartCount} / {table.missingCount}</small>
                 </button>
@@ -137,7 +161,11 @@ export function App(): JSX.Element {
             <div className="panel-title">BMS Path</div>
             <div className="roots-list">
               {state.bmsRootNodes.map((node) => (
-                <DirectoryTree key={node.id} node={node} expanded={expanded} onToggle={expandDirectory} />
+                <button key={node.id} className={`tree-row path-row ${selectedBmsRoot?.path === node.path ? 'selected' : ''}`} onClick={() => selectBmsRoot(node)} title={node.path}>
+                  <FolderOpen size={14} />
+                  <span>{node.name}</span>
+                  <small>{node.chartCount ?? 0}</small>
+                </button>
               ))}
             </div>
           </section>
@@ -146,8 +174,8 @@ export function App(): JSX.Element {
         <main className="mainpane">
           <div className="toolbar">
             <div className="title-block">
-              <strong>{activeTable?.name ?? 'All Tables'}</strong>
-              <span>{activeTable ? `${activeTable.chartCount} charts / ${activeTable.missingCount} NO SONG` : `${visibleRows.length} charts`}</span>
+              <strong>{selectedBmsRoot?.name ?? activeTable?.name ?? 'All Tables'}</strong>
+              <span>{makeSubtitle(selectedBmsRoot, activeTable, visibleRows.length)}</span>
             </div>
             <label className="searchbox">
               <Search size={16} />
@@ -155,7 +183,7 @@ export function App(): JSX.Element {
             </label>
           </div>
 
-          <ChartTable rows={visibleRows} onContextMenu={openContextMenu} />
+          <ChartTable rows={visibleRows} sort={sort} onSort={toggleSort} onContextMenu={openContextMenu} />
         </main>
 
         {similarTarget && (
@@ -165,7 +193,7 @@ export function App(): JSX.Element {
               <button onClick={() => setSimilarTarget(null)}>Close</button>
             </div>
             <div className="similar-target">{similarTarget.title}</div>
-            <ChartTable rows={similarRows} compact onContextMenu={openContextMenu} />
+            <ChartTable rows={similarRows} compact sort={sort} onSort={toggleSort} onContextMenu={openContextMenu} />
           </aside>
         )}
       </div>
@@ -183,40 +211,38 @@ export function App(): JSX.Element {
   );
 }
 
-function DirectoryTree({ node, expanded, onToggle }: { node: DirectoryNode; expanded: Record<string, DirectoryNode[]>; onToggle(node: DirectoryNode): Promise<void> }): JSX.Element {
-  const children = expanded[node.path];
-  return (
-    <div className="dir-node">
-      <button className="tree-row path-row" onClick={() => void onToggle(node)} title={node.path}>
-        {children ? <ChevronDown size={14} /> : <ChevronRight size={14} />}
-        <span>{node.name}</span>
-      </button>
-      {children && <div className="dir-children">{children.map((child) => <DirectoryTree key={child.id} node={child} expanded={expanded} onToggle={onToggle} />)}</div>}
-    </div>
-  );
-}
+function ChartTable({ rows, compact = false, sort, onSort, onContextMenu }: { rows: TableChartRow[]; compact?: boolean; sort: SortState; onSort(key: SortKey): void; onContextMenu(event: React.MouseEvent, row: TableChartRow): void }): JSX.Element {
+  const columns: Array<{ key: SortKey; label: string; hidden?: boolean }> = [
+    { key: 'level', label: 'FOLDER' },
+    { key: 'songLevel', label: 'LEVEL' },
+    { key: 'title', label: 'TITLE' },
+    { key: 'artist', label: 'ARTIST' },
+    { key: 'url1', label: 'URL1' },
+    { key: 'url2', label: 'URL2' },
+    { key: 'status', label: 'CLEAR' },
+    { key: 'notes', label: 'NOTES' },
+    { key: 'tableName', label: 'TABLE', hidden: compact },
+    { key: 'path', label: 'PATH', hidden: compact }
+  ];
 
-function ChartTable({ rows, compact = false, onContextMenu }: { rows: TableChartRow[]; compact?: boolean; onContextMenu(event: React.MouseEvent, row: TableChartRow): void }): JSX.Element {
   return (
     <div className={`chart-table-wrap ${compact ? 'compact' : ''}`}>
       <table className="chart-table">
         <thead>
           <tr>
-            <th>FOLDER</th>
-            <th>LEVEL</th>
-            <th>TITLE</th>
-            <th>ARTIST</th>
-            <th>URL1</th>
-            <th>URL2</th>
-            <th>CLEAR</th>
-            <th>NOTES</th>
-            {!compact && <th>TABLE</th>}
-            {!compact && <th>PATH</th>}
+            {columns.filter((column) => !column.hidden).map((column) => (
+              <th key={column.key}>
+                <button className="sort-header" onClick={() => onSort(column.key)}>
+                  <span>{column.label}</span>
+                  <SortIcon active={sort.key === column.key} direction={sort.direction} />
+                </button>
+              </th>
+            ))}
           </tr>
         </thead>
         <tbody>
           {rows.map((row) => (
-            <tr key={row.id} onContextMenu={(event) => onContextMenu(event, row)}>
+            <tr key={row.id} className={row.status === 'NO SONG' ? 'no-song-row' : ''} onContextMenu={(event) => onContextMenu(event, row)}>
               <td className="folder-cell" title={row.level}>{row.level}</td>
               <td>{row.songLevel ?? row.difficulty ?? ''}</td>
               <td className="title-cell" title={`${row.title} ${row.subtitle}`}>{row.title}<span>{row.subtitle}</span></td>
@@ -235,10 +261,50 @@ function ChartTable({ rows, compact = false, onContextMenu }: { rows: TableChart
   );
 }
 
+function SortIcon({ active, direction }: { active: boolean; direction: SortDirection }): JSX.Element {
+  if (!active) return <ArrowUpDown size={12} />;
+  return direction === 'asc' ? <ArrowUp size={12} /> : <ArrowDown size={12} />;
+}
+
 function UrlButton({ url }: { url: string }): JSX.Element {
   return (
     <button className="url-button" disabled={!url} onClick={() => void window.managerApi.openExternal(url)} title={url || 'No URL'}>
       <ExternalLink size={14} />
     </button>
   );
+}
+
+function makeSubtitle(selectedBmsRoot: DirectoryNode | null, activeTable: { chartCount: number; missingCount: number } | null, visibleCount: number): string {
+  if (selectedBmsRoot) return `${visibleCount} charts under selected BMS Path`;
+  if (activeTable) return `${activeTable.chartCount} charts / ${activeTable.missingCount} NO SONG`;
+  return `${visibleCount} charts`;
+}
+
+function sortRows(rows: TableChartRow[], sort: SortState): TableChartRow[] {
+  return [...rows].sort((a, b) => {
+    const direction = sort.direction === 'asc' ? 1 : -1;
+    return compareValues(sortValue(a, sort.key), sortValue(b, sort.key)) * direction;
+  });
+}
+
+function sortValue(row: TableChartRow, key: SortKey): string | number {
+  if (key === 'songLevel') return row.songLevel ?? row.difficulty ?? -1;
+  if (key === 'status') return statusOrder.get(row.status) ?? -1;
+  if (key === 'notes') return row.notes ?? -1;
+  return String(row[key] ?? '').toLowerCase();
+}
+
+function compareValues(a: string | number, b: string | number): number {
+  if (typeof a === 'number' && typeof b === 'number') return a - b;
+  return String(a).localeCompare(String(b), 'ja', { numeric: true, sensitivity: 'base' });
+}
+
+function isRowUnderRoot(row: TableChartRow, root: string): boolean {
+  const normalizedRoot = normalizePath(root).replace(/\/+$/, '');
+  const candidates = [row.path, row.folder].map(normalizePath).filter(Boolean);
+  return candidates.some((candidate) => candidate === normalizedRoot || candidate.startsWith(`${normalizedRoot}/`));
+}
+
+function normalizePath(value: string): string {
+  return value.replace(/\\/g, '/').toLowerCase();
 }

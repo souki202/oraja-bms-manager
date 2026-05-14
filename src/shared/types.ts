@@ -37,6 +37,7 @@ export interface DirectoryNode {
   id: string;
   name: string;
   path: string;
+  chartCount?: number;
   children?: DirectoryNode[];
   isRoot?: boolean;
 }
@@ -91,6 +92,7 @@ export interface ManagerState {
   selectedPlayer: PlayerProfile | null;
   tables: TableSummary[];
   rows: TableChartRow[];
+  libraryRows: TableChartRow[];
   bmsRootNodes: DirectoryNode[];
   diagnostics: string[];
 }

@@ -24,6 +24,15 @@ describe('findSimilarRows', () => {
     expect(result.map((item) => item.id)).toEqual(['c', 'b']);
     expect(result[0].matchReason).toBe('title + artist');
   });
+
+  it('does not treat empty or tiny titles as broad partial matches', () => {
+    const target = row('a', 'サンバランド [DP BEGINNER]', 'SAMBA MASTER', 'NO PLAY');
+    const blank = row('b', '', 'Music : NODATA', 'NO SONG');
+    const tiny = row('c', 'サ', 'SAMBA MASTER', 'NO SONG');
+    const good = row('d', 'サンバランド [POROTHER]', 'SAMBA MASTER', 'NO SONG');
+
+    expect(findSimilarRows(target, [target, blank, tiny, good]).map((item) => item.id)).toEqual(['d']);
+  });
 });
 
 function row(id: string, title: string, artist: string, status: TableChartRow['status']): TableChartRow {

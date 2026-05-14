@@ -76,11 +76,12 @@ export class ManagerRepository {
     let selectedPlayer: PlayerProfile | null = null;
     let tables: TableSummary[] = [];
     let rows: TableChartRow[] = [];
+    let libraryRows: TableChartRow[] = [];
     let bmsRootNodes: DirectoryNode[] = [];
 
     if (!settings.beatorajaRoot) {
       diagnostics.push('beatoraja root is not set.');
-      return { settings, beatoraja, players, selectedPlayer, tables, rows, bmsRootNodes, diagnostics };
+      return { settings, beatoraja, players, selectedPlayer, tables, rows, libraryRows, bmsRootNodes, diagnostics };
     }
 
     try {
@@ -90,13 +91,6 @@ export class ManagerRepository {
       if (selectedPlayer && settings.selectedPlayerId !== selectedPlayer.id) {
         settings.selectedPlayerId = selectedPlayer.id;
       }
-      bmsRootNodes = beatoraja.bmsRoots.map((root, index) => ({
-        id: `bms-root-${index}`,
-        name: root,
-        path: root,
-        isRoot: true
-      }));
-
       const [songRows, songInfoRows, scoreRows, loadedTables] = await Promise.all([
         this.loadSongs(beatoraja.songDbPath, diagnostics),
         beatoraja.songInfoDbPath ? this.loadSongInfo(beatoraja.songInfoDbPath, diagnostics) : Promise.resolve([]),
@@ -107,11 +101,19 @@ export class ManagerRepository {
       const hydrated = hydrateRows(loadedTables, songRows, songInfoRows, scoreRows);
       rows = hydrated.rows;
       tables = hydrated.tables;
+      libraryRows = createLibraryRows(songRows, songInfoRows, scoreRows);
+      bmsRootNodes = beatoraja.bmsRoots.map((root, index) => ({
+        id: `bms-root-${index}`,
+        name: root,
+        path: root,
+        isRoot: true,
+        chartCount: libraryRows.filter((row) => isPathUnderRoot(row.path, root)).length
+      }));
     } catch (error) {
       diagnostics.push(error instanceof Error ? error.message : String(error));
     }
 
-    return { settings, beatoraja, players, selectedPlayer, tables, rows, bmsRootNodes, diagnostics };
+    return { settings, beatoraja, players, selectedPlayer, tables, rows, libraryRows, bmsRootNodes, diagnostics };
   }
 
   async loadSettings(): Promise<AppSettings> {
@@ -302,6 +304,48 @@ function hydrateRows(
   return { rows, tables };
 }
 
+function createLibraryRows(songs: SongDbRow[], infos: SongInfoRow[], scores: ScoreDbRow[]): TableChartRow[] {
+  const infoBySha = new Map(infos.filter((info) => info.sha256).map((info) => [lower(info.sha256), info]));
+  const scoreBySha = bestScoresBySha(scores);
+  return songs
+    .filter((song) => song.sha256 || song.md5)
+    .map((song, index) => {
+      const sha = lower(song.sha256);
+      const info = sha ? infoBySha.get(sha) : undefined;
+      const score = sha ? scoreBySha.get(sha) : undefined;
+      const clear = numberOrNull(score?.clear);
+      return {
+        id: `library:${sha || lower(song.md5) || index}`,
+        tableId: '__library',
+        tableName: 'BMS Path',
+        tableUrl: '',
+        level: path.basename(path.dirname(String(song.path ?? ''))),
+        title: String(song.title ?? ''),
+        subtitle: String(song.subtitle ?? ''),
+        artist: String(song.artist ?? ''),
+        genre: String(song.genre ?? ''),
+        md5: lower(song.md5),
+        sha256: sha,
+        orgMd5: '',
+        url1: '',
+        url2: '',
+        ipfs: '',
+        appendIpfs: '',
+        mode: numberOrNull(song.mode),
+        installed: true,
+        status: clearToStatus(clear),
+        clear,
+        notes: numberOrNull(song.notes ?? score?.notes),
+        difficulty: numberOrNull(song.difficulty),
+        songLevel: numberOrNull(song.level),
+        mainBpm: numberOrNull(info?.mainbpm),
+        density: numberOrNull(info?.density),
+        path: String(song.path ?? ''),
+        folder: String(song.folder ?? '')
+      } satisfies TableChartRow;
+    });
+}
+
 function createRow(
   tableId: string,
   tableName: string,
@@ -401,4 +445,14 @@ function numberOrNull(value: unknown): number | null {
 
 function uniqueStrings(values: string[]): string[] {
   return [...new Set(values.filter(Boolean))];
+}
+
+function normalizePath(value: string): string {
+  return value.replace(/\\/g, '/').toLowerCase();
+}
+
+function isPathUnderRoot(filePath: string, root: string): boolean {
+  const normalizedPath = normalizePath(filePath);
+  const normalizedRoot = normalizePath(root).replace(/\/+$/, '');
+  return normalizedPath === normalizedRoot || normalizedPath.startsWith(`${normalizedRoot}/`);
 }

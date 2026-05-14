@@ -61,6 +61,8 @@ export function findSimilarRows(target: TableChartRow, rows: TableChartRow[]): T
   const targetFull = normalizeText(`${targetTitle} ${targetArtist}`);
   const candidates: TableChartRow[] = [];
 
+  if (!targetTitle && !target.orgMd5 && !target.md5) return [];
+
   for (const row of rows) {
     if (row.id === target.id) continue;
 
@@ -78,7 +80,9 @@ export function findSimilarRows(target: TableChartRow, rows: TableChartRow[]): T
       const rowArtist = normalizeText(row.artist);
       const rowFull = normalizeText(`${rowTitle} ${rowArtist}`);
 
-      if (targetFull && rowFull === targetFull) {
+      if (!rowTitle) {
+        confidence = 0;
+      } else if (targetFull && rowFull === targetFull) {
         confidence = 0.94;
         matchReason = 'title + artist';
       } else if (targetTitle && rowTitle === targetTitle && targetArtist && rowArtist.includes(targetArtist)) {
@@ -87,7 +91,7 @@ export function findSimilarRows(target: TableChartRow, rows: TableChartRow[]): T
       } else if (targetTitle.length > 4 && rowTitle === targetTitle) {
         confidence = 0.8;
         matchReason = 'title';
-      } else if (targetTitle.length > 5 && (rowTitle.includes(targetTitle) || targetTitle.includes(rowTitle))) {
+      } else if (targetTitle.length > 5 && rowTitle.length > 3 && (rowTitle.includes(targetTitle) || targetTitle.includes(rowTitle))) {
         confidence = 0.68;
         matchReason = 'partial title';
       }
@@ -104,5 +108,5 @@ export function findSimilarRows(target: TableChartRow, rows: TableChartRow[]): T
     if (a.status === 'NO SONG' && b.status !== 'NO SONG') return -1;
     if (b.status === 'NO SONG' && a.status !== 'NO SONG') return 1;
     return a.title.localeCompare(b.title, 'ja');
-  });
+  }).slice(0, 500);
 }
