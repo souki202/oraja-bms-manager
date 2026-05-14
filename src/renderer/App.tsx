@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { useVirtualizer } from '@tanstack/react-virtual';
-import { ArrowDown, ArrowUp, ArrowUpDown, Copy, Download, ExternalLink, FolderOpen, GitBranch, RefreshCw, Search, Settings } from 'lucide-react';
+import { ArrowDown, ArrowUp, ArrowUpDown, ChevronRight, Copy, Download, ExternalLink, FolderOpen, GitBranch, RefreshCw, Search, Settings } from 'lucide-react';
 import type { DirectoryNode, ManagerState, TableChartRow, TableSummary } from '../shared/types';
 import { findSimilarRows, rowMatchesSearch, statusClass } from '../shared/domain';
 import { buildTableExport } from '../shared/exportTable';
@@ -15,9 +15,23 @@ type ContextMenuState = {
 type SortKey = 'level' | 'songLevel' | 'title' | 'artist' | 'url1' | 'url2' | 'status' | 'notes' | 'tableName' | 'path';
 type SortDirection = 'asc' | 'desc';
 type SortState = { key: SortKey; direction: SortDirection };
+type IrTarget = 'lr2' | 'mocha' | 'minir';
+type TableColumn = { key: SortKey; label: string; width: number; minWidth: number };
 
 const defaultSort: SortState = { key: 'title', direction: 'asc' };
 const collator = new Intl.Collator('ja', { numeric: true, sensitivity: 'base' });
+const chartColumns: TableColumn[] = [
+  { key: 'level', label: 'FOLDER', width: 120, minWidth: 86 },
+  { key: 'songLevel', label: 'LEVEL', width: 62, minWidth: 54 },
+  { key: 'title', label: 'TITLE', width: 300, minWidth: 190 },
+  { key: 'artist', label: 'ARTIST', width: 230, minWidth: 160 },
+  { key: 'url1', label: 'URL1', width: 52, minWidth: 46 },
+  { key: 'url2', label: 'URL2', width: 52, minWidth: 46 },
+  { key: 'status', label: 'CLEAR', width: 120, minWidth: 104 },
+  { key: 'notes', label: 'NOTES', width: 78, minWidth: 66 },
+  { key: 'tableName', label: 'TABLE', width: 180, minWidth: 130 },
+  { key: 'path', label: 'PATH', width: 520, minWidth: 360 }
+];
 const statusOrder = new Map<string, number>([
   ['NO SONG', 0],
   ['NO PLAY', 1],
@@ -146,6 +160,22 @@ export function App(): JSX.Element {
     setContextMenu({ x: event.clientX, y: event.clientY, row });
   }
 
+  function openExternalFromMenu(url: string): void {
+    if (url) void window.managerApi.openExternal(url);
+    setContextMenu(null);
+  }
+
+  function openIrFromMenu(row: TableChartRow, target: IrTarget): void {
+    const url = buildIrUrl(row, target);
+    if (url) void window.managerApi.openExternal(url);
+    setContextMenu(null);
+  }
+
+  function openPathFromMenu(row: TableChartRow): void {
+    void window.managerApi.openPath({ path: row.path, folder: row.folder });
+    setContextMenu(null);
+  }
+
   if (loading || !state) {
     return <div className="boot">読み込み中...</div>;
   }
@@ -242,9 +272,17 @@ export function App(): JSX.Element {
 
       {contextMenu && (
         <div className="context-menu" style={{ left: contextMenu.x, top: contextMenu.y }} onClick={(event) => event.stopPropagation()}>
-          <button disabled={!contextMenu.row.url1} onClick={() => void window.managerApi.openExternal(contextMenu.row.url1)}><ExternalLink size={14} />Open URL1</button>
-          <button disabled={!contextMenu.row.url2} onClick={() => void window.managerApi.openExternal(contextMenu.row.url2)}><ExternalLink size={14} />Open URL2</button>
-          <button disabled={!contextMenu.row.path && !contextMenu.row.folder} onClick={() => void window.managerApi.openPath({ path: contextMenu.row.path, folder: contextMenu.row.folder })}><FolderOpen size={14} />Open in Explorer</button>
+          <button disabled={!contextMenu.row.url1} onClick={() => openExternalFromMenu(contextMenu.row.url1)}><ExternalLink size={14} />Open URL1</button>
+          <button disabled={!contextMenu.row.url2} onClick={() => openExternalFromMenu(contextMenu.row.url2)}><ExternalLink size={14} />Open URL2</button>
+          <button disabled={!contextMenu.row.path && !contextMenu.row.folder} onClick={() => openPathFromMenu(contextMenu.row)}><FolderOpen size={14} />Open in Explorer</button>
+          <div className="context-submenu">
+            <button disabled={!contextMenu.row.md5 && !contextMenu.row.sha256}><ExternalLink size={14} /><span>Open IR</span><ChevronRight size={14} /></button>
+            <div className="context-submenu-panel">
+              <button disabled={!contextMenu.row.md5} onClick={() => openIrFromMenu(contextMenu.row, 'lr2')}>LR2</button>
+              <button disabled={!contextMenu.row.sha256} onClick={() => openIrFromMenu(contextMenu.row, 'mocha')}>mocha-repository</button>
+              <button disabled={!contextMenu.row.sha256} onClick={() => openIrFromMenu(contextMenu.row, 'minir')}>MinIR</button>
+            </div>
+          </div>
           <button onClick={() => { void navigator.clipboard.writeText(contextMenu.row.sha256 || contextMenu.row.md5); setContextMenu(null); }}><Copy size={14} />Copy Hash</button>
           <button onClick={() => { setSimilarTarget(contextMenu.row); setContextMenu(null); }}><GitBranch size={14} />Same Song Search</button>
         </div>
@@ -255,19 +293,9 @@ export function App(): JSX.Element {
 
 function ChartTable({ rows, compact = false, sort, onSort, onContextMenu }: { rows: TableChartRow[]; compact?: boolean; sort: SortState; onSort(key: SortKey): void; onContextMenu(event: React.MouseEvent, row: TableChartRow): void }): JSX.Element {
   const parentRef = useRef<HTMLDivElement>(null);
-  const columns: Array<{ key: SortKey; label: string; hidden?: boolean }> = [
-    { key: 'level', label: 'FOLDER' },
-    { key: 'songLevel', label: 'LEVEL' },
-    { key: 'title', label: 'TITLE' },
-    { key: 'artist', label: 'ARTIST' },
-    { key: 'url1', label: 'URL1' },
-    { key: 'url2', label: 'URL2' },
-    { key: 'status', label: 'CLEAR' },
-    { key: 'notes', label: 'NOTES' },
-    { key: 'tableName', label: 'TABLE', hidden: compact },
-    { key: 'path', label: 'PATH', hidden: compact }
-  ];
-  const visibleColumns = columns.filter((column) => !column.hidden);
+  const [columnWidths, setColumnWidths] = useState<Record<SortKey, number>>(() => createColumnWidthState());
+  const visibleColumns = chartColumns.filter((column) => !(compact && (column.key === 'tableName' || column.key === 'path')));
+  const tableWidth = visibleColumns.reduce((sum, column) => sum + columnWidths[column.key], 0);
   const rowVirtualizer = useVirtualizer({
     count: rows.length,
     getScrollElement: () => parentRef.current,
@@ -278,9 +306,32 @@ function ChartTable({ rows, compact = false, sort, onSort, onContextMenu }: { ro
   const paddingTop = virtualRows.length > 0 ? virtualRows[0].start : 0;
   const paddingBottom = virtualRows.length > 0 ? rowVirtualizer.getTotalSize() - virtualRows[virtualRows.length - 1].end : 0;
 
+  function startColumnResize(event: React.PointerEvent<HTMLSpanElement>, column: TableColumn): void {
+    event.preventDefault();
+    event.stopPropagation();
+    const startX = event.clientX;
+    const startWidth = columnWidths[column.key];
+
+    const resize = (moveEvent: PointerEvent): void => {
+      const nextWidth = Math.max(column.minWidth, startWidth + moveEvent.clientX - startX);
+      setColumnWidths((current) => ({ ...current, [column.key]: nextWidth }));
+    };
+    const stopResize = (): void => {
+      window.removeEventListener('pointermove', resize);
+      document.body.classList.remove('resizing-column');
+    };
+
+    document.body.classList.add('resizing-column');
+    window.addEventListener('pointermove', resize);
+    window.addEventListener('pointerup', stopResize, { once: true });
+  }
+
   return (
     <div ref={parentRef} className={`chart-table-wrap ${compact ? 'compact' : ''}`}>
-      <table className="chart-table">
+      <table className="chart-table" style={{ width: tableWidth, minWidth: tableWidth }}>
+        <colgroup>
+          {visibleColumns.map((column) => <col key={column.key} style={{ width: columnWidths[column.key] }} />)}
+        </colgroup>
         <thead>
           <tr>
             {visibleColumns.map((column) => (
@@ -289,6 +340,7 @@ function ChartTable({ rows, compact = false, sort, onSort, onContextMenu }: { ro
                   <span>{column.label}</span>
                   <SortIcon active={sort.key === column.key} direction={sort.direction} />
                 </button>
+                <span className="column-resizer" onPointerDown={(event) => startColumnResize(event, column)} />
               </th>
             ))}
           </tr>
@@ -338,6 +390,32 @@ function UrlButton({ url }: { url: string }): JSX.Element {
       <ExternalLink size={14} />
     </button>
   );
+}
+
+function createColumnWidthState(): Record<SortKey, number> {
+  return chartColumns.reduce<Record<SortKey, number>>((widths, column) => {
+    widths[column.key] = column.width;
+    return widths;
+  }, {
+    level: 0,
+    songLevel: 0,
+    title: 0,
+    artist: 0,
+    url1: 0,
+    url2: 0,
+    status: 0,
+    notes: 0,
+    tableName: 0,
+    path: 0
+  });
+}
+
+function buildIrUrl(row: TableChartRow, target: IrTarget): string {
+  const hash = (target === 'lr2' ? row.md5 : row.sha256).trim().toLowerCase();
+  if (!hash) return '';
+  if (target === 'lr2') return `http://www.dream-pro.info/~lavalse/LR2IR/search.cgi?mode=ranking&bmsmd5=${hash}`;
+  if (target === 'mocha') return `https://mocha-repository.info/song.php?sha256=${hash}`;
+  return `https://www.gaftalk.com/minir/#/viewer/song/${hash}/0`;
 }
 
 function makeSubtitle(selectedBmsRoot: DirectoryNode | null, activeTable: { chartCount: number; missingCount: number } | null, visibleCount: number): string {

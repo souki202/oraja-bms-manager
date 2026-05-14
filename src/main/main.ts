@@ -76,7 +76,16 @@ ipcMain.handle('shell:open-external', async (_event, url: string) => {
 ipcMain.handle('shell:open-path', async (_event, payload: OpenPathPayload) => {
   const target = await repository.resolveOpenTarget(payload.path, payload.folder);
   if (!target) return false;
-  await shell.openPath(target);
+  try {
+    const stats = await fs.stat(target);
+    if (stats.isDirectory()) {
+      await shell.openPath(target);
+    } else {
+      shell.showItemInFolder(target);
+    }
+  } catch {
+    return false;
+  }
   return true;
 });
 
