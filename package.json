@@ -9,9 +9,42 @@
     "build:main": "tsc -p tsconfig.main.json",
     "build:renderer": "vite build",
     "build": "npm run typecheck && npm run build:main && npm run build:renderer",
+    "release:win": "npm run release:win:dir && powershell -NoProfile -ExecutionPolicy Bypass -File scripts/package-win-release.ps1",
+    "release:win:portable": "npm run build && electron-builder --win portable",
+    "release:win:dir": "npm run build && electron-builder --win dir",
     "typecheck": "tsc -p tsconfig.main.json --noEmit && tsc -p tsconfig.renderer.json --noEmit",
     "lint": "eslint .",
     "test": "vitest run"
+  },
+  "build": {
+    "appId": "local.beatoraja.chart-manager",
+    "productName": "beatoraja Chart Manager",
+    "directories": {
+      "output": "release"
+    },
+    "files": [
+      "dist/**/*",
+      "package.json"
+    ],
+    "extraResources": [
+      {
+        "from": "node_modules/sql.js/dist/sql-wasm.wasm",
+        "to": "sql-wasm.wasm"
+      }
+    ],
+    "asar": true,
+    "npmRebuild": false,
+    "win": {
+      "target": [
+        {
+          "target": "portable",
+          "arch": [
+            "x64"
+          ]
+        }
+      ],
+      "artifactName": "beatoraja-chart-manager-${version}-win-${arch}.${ext}"
+    }
   },
   "dependencies": {
     "@tanstack/react-virtual": "^3.13.12",
@@ -30,6 +63,7 @@
     "concurrently": "^9.1.0",
     "cross-env": "^7.0.3",
     "electron": "^33.2.1",
+    "electron-builder": "^26.8.1",
     "eslint": "^9.15.0",
     "typescript": "^5.7.2",
     "typescript-eslint": "^8.16.0",

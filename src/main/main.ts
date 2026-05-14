@@ -4,10 +4,13 @@ import path from 'node:path';
 import { ManagerRepository } from './repository';
 import type { AppSettings, ExportPayload, ExportResult, OpenPathPayload } from '../shared/types';
 
-const appRoot = path.resolve(__dirname, '../..');
-app.setPath('userData', path.join(appRoot, 'data', 'electron-user-data'));
+const appRoot = app.getAppPath();
+const dataRoot = app.isPackaged ? app.getPath('userData') : path.join(appRoot, 'data');
+if (!app.isPackaged) {
+  app.setPath('userData', path.join(dataRoot, 'electron-user-data'));
+}
 
-const repository = new ManagerRepository(appRoot);
+const repository = new ManagerRepository(appRoot, dataRoot);
 
 function createWindow(): void {
   const window = new BrowserWindow({

@@ -7,9 +7,14 @@ let sqlModule: SqlJsStatic | null = null;
 async function getSql(appRoot: string): Promise<SqlJsStatic> {
   if (sqlModule) return sqlModule;
   sqlModule = await initSqlJs({
-    locateFile: (file) => path.join(appRoot, 'node_modules', 'sql.js', 'dist', file)
+    locateFile: (file) => locateSqlJsFile(file, appRoot)
   });
   return sqlModule;
+}
+
+function locateSqlJsFile(file: string, appRoot: string): string {
+  if (appRoot.endsWith('.asar')) return path.join(process.resourcesPath, file);
+  return path.join(appRoot, 'node_modules', 'sql.js', 'dist', file);
 }
 
 export async function openReadonlyDatabase(filePath: string, appRoot: string): Promise<Database> {

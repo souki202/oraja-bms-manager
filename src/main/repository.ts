@@ -59,8 +59,8 @@ const defaultSettings: AppSettings = {
 export class ManagerRepository {
   private readonly settingsPath: string;
 
-  constructor(private readonly appRoot: string) {
-    this.settingsPath = path.join(appRoot, 'data', 'settings.json');
+  constructor(private readonly appRoot: string, dataRoot = path.join(appRoot, 'data')) {
+    this.settingsPath = path.join(dataRoot, 'settings.json');
   }
 
   async loadState(): Promise<ManagerState> {
