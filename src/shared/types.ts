@@ -101,3 +101,15 @@ export interface OpenPathPayload {
   path: string;
   folder: string;
 }
+
+export interface ExportPayload {
+  header: Record<string, unknown>;
+  data: Record<string, unknown>[];
+}
+
+export interface ExportResult {
+  canceled: boolean;
+  directory?: string;
+  headerPath?: string;
+  dataPath?: string;
+}

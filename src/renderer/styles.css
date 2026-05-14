@@ -97,8 +97,13 @@ button, input, select { font: inherit; }
 .title-block span { color: #637083; }
 .searchbox { margin-left: auto; height: 30px; width: min(520px, 46vw); display: flex; align-items: center; gap: 6px; padding: 0 8px; border: 1px solid #aeb8c4; border-radius: 4px; background: #fff; }
 .searchbox input { width: 100%; border: 0; outline: 0; }
+.export-button { min-width: 84px; justify-content: center; }
+.export-button:disabled { color: #8b95a1; background: #e5e9ee; cursor: default; }
+.export-message { height: 24px; padding: 4px 10px; color: #2d4258; background: #eef6ff; border-bottom: 1px solid #c6d8ec; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 
+.list-region { position: relative; min-height: 0; flex: 1; display: flex; }
 .chart-table-wrap { min-height: 0; flex: 1; overflow: auto; }
+.loading-overlay { position: absolute; inset: 0; display: grid; place-items: center; color: #233242; background: rgba(248, 250, 252, .72); font-weight: 700; }
 .chart-table { width: 100%; border-collapse: collapse; table-layout: fixed; font-size: 12px; }
 .chart-table th { position: sticky; top: 0; z-index: 1; height: 24px; color: #24313f; background: #eef2f6; border-bottom: 1px solid #aeb8c4; border-right: 1px solid #d4dbe3; text-align: left; padding: 0; }
 .sort-header { width: 100%; height: 24px; display: flex; align-items: center; justify-content: space-between; gap: 4px; padding: 0 6px; border: 0; background: transparent; color: inherit; font-weight: 700; text-align: left; cursor: pointer; }

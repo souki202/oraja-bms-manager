@@ -1,7 +1,8 @@
 import { app, BrowserWindow, dialog, ipcMain, shell } from 'electron';
+import fs from 'node:fs/promises';
 import path from 'node:path';
 import { ManagerRepository } from './repository';
-import type { AppSettings, OpenPathPayload } from '../shared/types';
+import type { AppSettings, ExportPayload, ExportResult, OpenPathPayload } from '../shared/types';
 
 const appRoot = path.resolve(__dirname, '../..');
 app.setPath('userData', path.join(appRoot, 'data', 'electron-user-data'));
@@ -47,6 +48,21 @@ ipcMain.handle('settings:choose-root', async () => {
 });
 
 ipcMain.handle('directory:list', (_event, dirPath: string) => repository.listDirectories(dirPath));
+
+ipcMain.handle('table:export', async (_event, payload: ExportPayload): Promise<ExportResult> => {
+  const result = await dialog.showOpenDialog({
+    title: 'Export table',
+    properties: ['openDirectory', 'createDirectory']
+  });
+  if (result.canceled || result.filePaths.length === 0) return { canceled: true };
+
+  const directory = result.filePaths[0];
+  const headerPath = path.join(directory, 'header.json');
+  const dataPath = path.join(directory, 'data.json');
+  await fs.writeFile(headerPath, `${JSON.stringify(payload.header, null, 2)}\n`, 'utf8');
+  await fs.writeFile(dataPath, `${JSON.stringify(payload.data, null, 2)}\n`, 'utf8');
+  return { canceled: false, directory, headerPath, dataPath };
+});
 
 ipcMain.handle('shell:open-external', async (_event, url: string) => {
   if (!/^https?:\/\//i.test(url) && !/^ipfs:\/\//i.test(url)) return false;

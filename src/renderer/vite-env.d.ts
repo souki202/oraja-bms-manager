@@ -1,6 +1,6 @@
 /// <reference types="vite/client" />
 
-import type { AppSettings, DirectoryNode, ManagerState, OpenPathPayload } from '../shared/types';
+import type { AppSettings, DirectoryNode, ExportPayload, ExportResult, ManagerState, OpenPathPayload } from '../shared/types';
 
 declare global {
   interface Window {
@@ -9,6 +9,7 @@ declare global {
       saveSettings(patch: Partial<AppSettings>): Promise<ManagerState>;
       chooseRoot(): Promise<string | null>;
       listDirectories(dirPath: string): Promise<DirectoryNode[]>;
+      exportTable(payload: ExportPayload): Promise<ExportResult>;
       openExternal(url: string): Promise<boolean>;
       openPath(payload: OpenPathPayload): Promise<boolean>;
     };
