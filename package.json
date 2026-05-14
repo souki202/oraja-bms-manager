@@ -1,6 +1,6 @@
 {
   "name": "beatoraja-chart-manager",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "private": true,
   "description": "Read-only beatoraja chart and table manager",
   "main": "dist/main/main.js",
@@ -35,6 +35,7 @@
     "asar": true,
     "npmRebuild": false,
     "win": {
+      "signAndEditExecutable": false,
       "target": [
         {
           "target": "portable",

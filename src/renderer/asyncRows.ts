@@ -3,7 +3,6 @@ import type { TableChartRow } from '../shared/types';
 export async function buildRowsAsync(
   sourceRows: TableChartRow[],
   accepts: (row: TableChartRow) => boolean,
-  sortRows: (rows: TableChartRow[]) => TableChartRow[],
   signal: AbortSignal
 ): Promise<TableChartRow[]> {
   const rows: TableChartRow[] = [];
@@ -19,7 +18,7 @@ export async function buildRowsAsync(
   }
 
   if (signal.aborted) throw new DOMException('Aborted', 'AbortError');
-  return sortRows(rows);
+  return rows;
 }
 
 function yieldToUi(): Promise<void> {

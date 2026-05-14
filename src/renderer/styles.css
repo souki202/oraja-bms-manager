@@ -110,6 +110,7 @@ button, input, select { font: inherit; }
 .sort-header span { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .sort-header:hover { background: #dce6f0; }
 .chart-table td { height: 23px; border-right: 1px solid #e0e5eb; border-bottom: 1px solid #edf1f5; padding: 1px 6px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.chart-table .virtual-spacer td { height: auto; padding: 0; border: 0; }
 .chart-table tbody tr:nth-child(even) { background: #f7f9fb; }
 .chart-table tbody tr:hover { background: #dbeafe; }
 .chart-table tbody tr.no-song-row { background: #fff4e5; color: #5f4020; }

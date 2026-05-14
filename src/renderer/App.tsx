@@ -1,4 +1,5 @@
-import { useMemo, useState, useEffect } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
+import { useVirtualizer } from '@tanstack/react-virtual';
 import { ArrowDown, ArrowUp, ArrowUpDown, Copy, Download, ExternalLink, FolderOpen, GitBranch, RefreshCw, Search, Settings } from 'lucide-react';
 import type { DirectoryNode, ManagerState, TableChartRow, TableSummary } from '../shared/types';
 import { findSimilarRows, rowMatchesSearch, statusClass } from '../shared/domain';
@@ -16,6 +17,7 @@ type SortDirection = 'asc' | 'desc';
 type SortState = { key: SortKey; direction: SortDirection };
 
 const defaultSort: SortState = { key: 'title', direction: 'asc' };
+const collator = new Intl.Collator('ja', { numeric: true, sensitivity: 'base' });
 const statusOrder = new Map<string, number>([
   ['NO SONG', 0],
   ['NO PLAY', 1],
@@ -35,7 +37,7 @@ export function App(): JSX.Element {
   const [selectedTableId, setSelectedTableId] = useState<string | null>(null);
   const [selectedBmsRoot, setSelectedBmsRoot] = useState<DirectoryNode | null>(null);
   const [sort, setSort] = useState<SortState>(defaultSort);
-  const [visibleRows, setVisibleRows] = useState<TableChartRow[]>([]);
+  const [filteredRows, setFilteredRows] = useState<TableChartRow[]>([]);
   const [isListLoading, setIsListLoading] = useState(false);
   const [exportMessage, setExportMessage] = useState('');
   const [contextMenu, setContextMenu] = useState<ContextMenuState>(null);
@@ -77,10 +79,9 @@ export function App(): JSX.Element {
         const pathOk = selectedBmsRoot ? isRowUnderRoot(row, selectedBmsRoot.path) : true;
         return tableOk && pathOk && rowMatchesSearch(row, searchText);
       },
-      (rows) => sortRows(rows, sort),
       controller.signal
     ).then((rows) => {
-      if (!controller.signal.aborted) setVisibleRows(rows);
+      if (!controller.signal.aborted) setFilteredRows(rows);
     }).catch((error) => {
       if (!(error instanceof DOMException && error.name === 'AbortError')) console.error(error);
     }).finally(() => {
@@ -91,7 +92,9 @@ export function App(): JSX.Element {
       controller.abort();
       setIsListLoading(true);
     };
-  }, [state, selectedTableId, selectedBmsRoot, searchText, sort]);
+  }, [state, selectedTableId, selectedBmsRoot, searchText]);
+
+  const visibleRows = useMemo(() => sortRows(filteredRows, sort), [filteredRows, sort]);
 
   const similarRows = useMemo(() => {
     if (!state || !similarTarget) return [];
@@ -251,6 +254,7 @@ export function App(): JSX.Element {
 }
 
 function ChartTable({ rows, compact = false, sort, onSort, onContextMenu }: { rows: TableChartRow[]; compact?: boolean; sort: SortState; onSort(key: SortKey): void; onContextMenu(event: React.MouseEvent, row: TableChartRow): void }): JSX.Element {
+  const parentRef = useRef<HTMLDivElement>(null);
   const columns: Array<{ key: SortKey; label: string; hidden?: boolean }> = [
     { key: 'level', label: 'FOLDER' },
     { key: 'songLevel', label: 'LEVEL' },
@@ -263,13 +267,23 @@ function ChartTable({ rows, compact = false, sort, onSort, onContextMenu }: { ro
     { key: 'tableName', label: 'TABLE', hidden: compact },
     { key: 'path', label: 'PATH', hidden: compact }
   ];
+  const visibleColumns = columns.filter((column) => !column.hidden);
+  const rowVirtualizer = useVirtualizer({
+    count: rows.length,
+    getScrollElement: () => parentRef.current,
+    estimateSize: () => 23,
+    overscan: 20
+  });
+  const virtualRows = rowVirtualizer.getVirtualItems();
+  const paddingTop = virtualRows.length > 0 ? virtualRows[0].start : 0;
+  const paddingBottom = virtualRows.length > 0 ? rowVirtualizer.getTotalSize() - virtualRows[virtualRows.length - 1].end : 0;
 
   return (
-    <div className={`chart-table-wrap ${compact ? 'compact' : ''}`}>
+    <div ref={parentRef} className={`chart-table-wrap ${compact ? 'compact' : ''}`}>
       <table className="chart-table">
         <thead>
           <tr>
-            {columns.filter((column) => !column.hidden).map((column) => (
+            {visibleColumns.map((column) => (
               <th key={column.key}>
                 <button className="sort-header" onClick={() => onSort(column.key)}>
                   <span>{column.label}</span>
@@ -280,23 +294,36 @@ function ChartTable({ rows, compact = false, sort, onSort, onContextMenu }: { ro
           </tr>
         </thead>
         <tbody>
-          {rows.map((row) => (
-            <tr key={row.id} className={row.status === 'NO SONG' ? 'no-song-row' : ''} onContextMenu={(event) => onContextMenu(event, row)}>
-              <td className="folder-cell" title={row.level}>{row.level}</td>
-              <td>{row.songLevel ?? row.difficulty ?? ''}</td>
-              <td className="title-cell" title={`${row.title} ${row.subtitle}`}>{row.title}<span>{row.subtitle}</span></td>
-              <td title={row.artist}>{row.artist}</td>
-              <td><UrlButton url={row.url1} /></td>
-              <td><UrlButton url={row.url2} /></td>
-              <td><span className={`lamp ${statusClass(row.status)}`}>{row.status}</span></td>
-              <td>{row.notes ?? ''}</td>
-              {!compact && <td title={row.tableName}>{row.tableName}</td>}
-              {!compact && <td className="path-cell" title={row.path || row.folder}>{row.path || row.folder}</td>}
-            </tr>
-          ))}
+          {paddingTop > 0 && <VirtualSpacer height={paddingTop} colSpan={visibleColumns.length} />}
+          {virtualRows.map((virtualRow) => {
+            const row = rows[virtualRow.index];
+            return (
+              <tr key={row.id} className={row.status === 'NO SONG' ? 'no-song-row' : ''} onContextMenu={(event) => onContextMenu(event, row)}>
+                <td className="folder-cell" title={row.level}>{row.level}</td>
+                <td>{row.songLevel ?? row.difficulty ?? ''}</td>
+                <td className="title-cell" title={`${row.title} ${row.subtitle}`}>{row.title}<span>{row.subtitle}</span></td>
+                <td title={row.artist}>{row.artist}</td>
+                <td><UrlButton url={row.url1} /></td>
+                <td><UrlButton url={row.url2} /></td>
+                <td><span className={`lamp ${statusClass(row.status)}`}>{row.status}</span></td>
+                <td>{row.notes ?? ''}</td>
+                {!compact && <td title={row.tableName}>{row.tableName}</td>}
+                {!compact && <td className="path-cell" title={row.path || row.folder}>{row.path || row.folder}</td>}
+              </tr>
+            );
+          })}
+          {paddingBottom > 0 && <VirtualSpacer height={paddingBottom} colSpan={visibleColumns.length} />}
         </tbody>
       </table>
     </div>
+  );
+}
+
+function VirtualSpacer({ height, colSpan }: { height: number; colSpan: number }): JSX.Element {
+  return (
+    <tr className="virtual-spacer" aria-hidden="true">
+      <td colSpan={colSpan} style={{ height }} />
+    </tr>
   );
 }
 
@@ -339,7 +366,7 @@ function sortValue(row: TableChartRow, key: SortKey): string | number {
 
 function compareValues(a: string | number, b: string | number): number {
   if (typeof a === 'number' && typeof b === 'number') return a - b;
-  return String(a).localeCompare(String(b), 'ja', { numeric: true, sensitivity: 'base' });
+  return collator.compare(String(a), String(b));
 }
 
 function isRowUnderRoot(row: TableChartRow, root: string): boolean {
