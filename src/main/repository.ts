@@ -363,6 +363,7 @@ function createRow(
   const md5 = lower(chart.md5);
   const installedSong = (sha256 ? songBySha.get(sha256) : undefined) ?? (md5 ? songByMd5.get(md5) : undefined);
   const installedSha = lower(installedSong?.sha256) || sha256;
+  const installedMd5 = lower(installedSong?.md5) || md5;
   const info = installedSha ? infoBySha.get(installedSha) : undefined;
   const score = installedSha ? scoreBySha.get(installedSha) : undefined;
   const clear = numberOrNull(score?.clear);
@@ -370,7 +371,7 @@ function createRow(
   const status = installed ? clearToStatus(clear) : 'NO SONG';
 
   return {
-    id: `${tableId}:${folderIndex}:${chartIndex}:${sha256 || md5 || chart.title || chartIndex}`,
+    id: `${tableId}:${folderIndex}:${chartIndex}:${installedSha || installedMd5 || chart.title || chartIndex}`,
     tableId,
     tableName,
     tableUrl,
@@ -379,8 +380,8 @@ function createRow(
     subtitle: String(installedSong?.subtitle ?? chart.subtitle ?? ''),
     artist: String(installedSong?.artist ?? chart.artist ?? ''),
     genre: String(installedSong?.genre ?? chart.genre ?? ''),
-    md5,
-    sha256,
+    md5: installedMd5,
+    sha256: installedSha,
     orgMd5: lower(chart.org_md5 ?? chart.orgMd5),
     url1: String(chart.url ?? ''),
     url2: String(chart.appendurl ?? chart.appendURL ?? chart.appendUrl ?? ''),
