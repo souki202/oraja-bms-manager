@@ -1,9 +1,11 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import type { JSX } from 'react';
 import { useVirtualizer } from '@tanstack/react-virtual';
-import { ArrowDown, ArrowUp, ArrowUpDown, ChevronRight, Copy, Download, ExternalLink, FolderOpen, GitBranch, RefreshCw, Search, Settings } from 'lucide-react';
+import { ArrowDown, ArrowUp, ArrowUpDown, ChevronRight, Copy, Download, ExternalLink, Filter, FolderOpen, GitBranch, RefreshCw, Search, Settings, X } from 'lucide-react';
 import type { DirectoryNode, ManagerState, TableChartRow, TableSummary } from '../shared/types';
-import { findSimilarRows, rowMatchesSearch, statusClass } from '../shared/domain';
+import type { ChartColumnFilter, ChartColumnFilters, ChartFilterCache, ChartFilterKey, UrlFilterMode } from '../shared/chartFilters';
+import { clearStatuses, countActiveColumnFilters, isColumnFilterActive, matchesChartFilters, normalizeSearchQuery, prepareColumnFilters } from '../shared/chartFilters';
+import { findSimilarRows, statusClass } from '../shared/domain';
 import { buildTableExport } from '../shared/exportTable';
 import { buildRowsAsync } from './asyncRows';
 
@@ -18,6 +20,11 @@ type SortDirection = 'asc' | 'desc';
 type SortState = { key: SortKey; direction: SortDirection };
 type IrTarget = 'lr2' | 'mocha' | 'minir';
 type TableColumn = { key: SortKey; label: string; width: number; minWidth: number };
+type FilterMenuState = { key: SortKey; x: number; y: number } | null;
+
+const filterMenuWidth = 300;
+const filterMenuMaxHeight = 300;
+const viewportMargin = 8;
 
 const defaultSort: SortState = { key: 'title', direction: 'asc' };
 const collator = new Intl.Collator('ja', { numeric: true, sensitivity: 'base' });
@@ -56,7 +63,13 @@ export function App(): JSX.Element {
   const [isListLoading, setIsListLoading] = useState(false);
   const [exportMessage, setExportMessage] = useState('');
   const [contextMenu, setContextMenu] = useState<ContextMenuState>(null);
+  const [filterMenu, setFilterMenu] = useState<FilterMenuState>(null);
+  const [columnFilters, setColumnFilters] = useState<ChartColumnFilters>({});
   const [similarTarget, setSimilarTarget] = useState<TableChartRow | null>(null);
+
+  const rowFilterCache = useMemo<ChartFilterCache>(() => new WeakMap(), [state]);
+  const preparedColumnFilters = useMemo(() => prepareColumnFilters(columnFilters), [columnFilters]);
+  const activeFilterCount = useMemo(() => countActiveColumnFilters(columnFilters), [columnFilters]);
 
   useEffect(() => {
     void load();
@@ -86,13 +99,14 @@ export function App(): JSX.Element {
     const controller = new AbortController();
     setIsListLoading(true);
     const sourceRows = selectedBmsRoot ? state.libraryRows : state.rows;
+    const normalizedSearch = normalizeSearchQuery(searchText);
 
     void buildRowsAsync(
       sourceRows,
       (row) => {
         const tableOk = selectedBmsRoot || !selectedTableId ? true : row.tableId === selectedTableId;
         const pathOk = selectedBmsRoot ? isRowUnderRoot(row, selectedBmsRoot.path) : true;
-        return tableOk && pathOk && rowMatchesSearch(row, searchText);
+        return tableOk && pathOk && matchesChartFilters(row, normalizedSearch, preparedColumnFilters, rowFilterCache);
       },
       controller.signal
     ).then((rows) => {
@@ -107,7 +121,7 @@ export function App(): JSX.Element {
       controller.abort();
       setIsListLoading(true);
     };
-  }, [state, selectedTableId, selectedBmsRoot, searchText]);
+  }, [state, selectedTableId, selectedBmsRoot, searchText, preparedColumnFilters, rowFilterCache]);
 
   const visibleRows = useMemo(() => sortRows(filteredRows, sort), [filteredRows, sort]);
 
@@ -156,8 +170,37 @@ export function App(): JSX.Element {
     }));
   }
 
+  function openFilterMenu(event: React.MouseEvent, key: SortKey): void {
+    event.preventDefault();
+    event.stopPropagation();
+    const rect = event.currentTarget.getBoundingClientRect();
+    setContextMenu(null);
+    setFilterMenu({ key, ...positionFilterMenu(rect) });
+  }
+
+  function updateColumnFilter(key: SortKey, patch: ChartColumnFilter): void {
+    setColumnFilters((current) => {
+      const nextFilter = { ...emptyColumnFilter(), ...current[key], ...patch };
+      if (!isColumnFilterActive(key as ChartFilterKey, nextFilter)) {
+        const next = { ...current };
+        delete next[key];
+        return next;
+      }
+      return { ...current, [key]: nextFilter };
+    });
+  }
+
+  function clearColumnFilter(key: SortKey): void {
+    setColumnFilters((current) => {
+      const next = { ...current };
+      delete next[key];
+      return next;
+    });
+  }
+
   function openContextMenu(event: React.MouseEvent, row: TableChartRow): void {
     event.preventDefault();
+    setFilterMenu(null);
     setContextMenu({ x: event.clientX, y: event.clientY, row });
   }
 
@@ -182,7 +225,7 @@ export function App(): JSX.Element {
   }
 
   return (
-    <div className="app" onClick={() => setContextMenu(null)}>
+    <div className="app" onClick={() => { setContextMenu(null); setFilterMenu(null); }}>
       <header className="topbar">
         <div className="brand">beatoraja Manager</div>
         <button className="icon-text" onClick={chooseRoot} title="beatoraja directory">
@@ -246,6 +289,12 @@ export function App(): JSX.Element {
               <Search size={16} />
               <input value={searchText} onChange={(event) => void updateSearch(event.target.value)} placeholder="Search title / artist / hash / table" />
             </label>
+            {activeFilterCount > 0 && (
+              <button className="icon-text clear-filters" onClick={() => setColumnFilters({})} title="Clear column filters">
+                <X size={16} />
+                <span>{activeFilterCount} filters</span>
+              </button>
+            )}
             <button className="icon-text export-button" disabled={!activeTable} onClick={() => void exportActiveTable()} title="Export selected table">
               <Download size={16} />
               <span>Export</span>
@@ -254,7 +303,7 @@ export function App(): JSX.Element {
           {exportMessage && <div className="export-message">{exportMessage}</div>}
 
           <div className="list-region">
-            <ChartTable rows={visibleRows} sort={sort} onSort={toggleSort} onContextMenu={openContextMenu} />
+            <ChartTable rows={visibleRows} sort={sort} columnFilters={columnFilters} onSort={toggleSort} onFilterClick={openFilterMenu} onContextMenu={openContextMenu} />
             {isListLoading && <div className="loading-overlay">読み込み中...</div>}
           </div>
         </main>
@@ -266,10 +315,21 @@ export function App(): JSX.Element {
               <button onClick={() => setSimilarTarget(null)}>Close</button>
             </div>
             <div className="similar-target">{similarTarget.title}</div>
-            <ChartTable rows={similarRows} compact sort={sort} onSort={toggleSort} onContextMenu={openContextMenu} />
+            <ChartTable rows={similarRows} compact sort={sort} columnFilters={columnFilters} onSort={toggleSort} onFilterClick={openFilterMenu} onContextMenu={openContextMenu} />
           </aside>
         )}
       </div>
+
+      {filterMenu && (
+        <ColumnFilterMenu
+          column={chartColumns.find((column) => column.key === filterMenu.key) ?? chartColumns[0]}
+          filter={columnFilters[filterMenu.key] ?? emptyColumnFilter()}
+          x={filterMenu.x}
+          y={filterMenu.y}
+          onChange={(patch) => updateColumnFilter(filterMenu.key, patch)}
+          onClear={() => clearColumnFilter(filterMenu.key)}
+        />
+      )}
 
       {contextMenu && (
         <div className="context-menu" style={{ left: contextMenu.x, top: contextMenu.y }} onClick={(event) => event.stopPropagation()}>
@@ -292,7 +352,7 @@ export function App(): JSX.Element {
   );
 }
 
-function ChartTable({ rows, compact = false, sort, onSort, onContextMenu }: { rows: TableChartRow[]; compact?: boolean; sort: SortState; onSort(key: SortKey): void; onContextMenu(event: React.MouseEvent, row: TableChartRow): void }): JSX.Element {
+function ChartTable({ rows, compact = false, sort, columnFilters, onSort, onFilterClick, onContextMenu }: { rows: TableChartRow[]; compact?: boolean; sort: SortState; columnFilters: ChartColumnFilters; onSort(key: SortKey): void; onFilterClick(event: React.MouseEvent, key: SortKey): void; onContextMenu(event: React.MouseEvent, row: TableChartRow): void }): JSX.Element {
   const parentRef = useRef<HTMLDivElement>(null);
   const [columnWidths, setColumnWidths] = useState<Record<SortKey, number>>(() => createColumnWidthState());
   const visibleColumns = chartColumns.filter((column) => !(compact && (column.key === 'tableName' || column.key === 'path')));
@@ -337,10 +397,15 @@ function ChartTable({ rows, compact = false, sort, onSort, onContextMenu }: { ro
           <tr>
             {visibleColumns.map((column) => (
               <th key={column.key}>
-                <button className="sort-header" onClick={() => onSort(column.key)}>
-                  <span>{column.label}</span>
-                  <SortIcon active={sort.key === column.key} direction={sort.direction} />
-                </button>
+                <div className="header-controls">
+                  <button className="sort-header" onClick={() => onSort(column.key)}>
+                    <span>{column.label}</span>
+                    <SortIcon active={sort.key === column.key} direction={sort.direction} />
+                  </button>
+                  <button className={`filter-button ${isColumnFilterActive(column.key as ChartFilterKey, columnFilters[column.key]) ? 'active' : ''}`} onClick={(event) => onFilterClick(event, column.key)} title={`${column.label} filter`}>
+                    <Filter size={12} />
+                  </button>
+                </div>
                 <span className="column-resizer" onPointerDown={(event) => startColumnResize(event, column)} />
               </th>
             ))}
@@ -368,6 +433,91 @@ function ChartTable({ rows, compact = false, sort, onSort, onContextMenu }: { ro
           {paddingBottom > 0 && <VirtualSpacer height={paddingBottom} colSpan={visibleColumns.length} />}
         </tbody>
       </table>
+    </div>
+  );
+}
+
+function ColumnFilterMenu({ column, filter, x, y, onChange, onClear }: { column: TableColumn; filter: ChartColumnFilter; x: number; y: number; onChange(patch: ChartColumnFilter): void; onClear(): void }): JSX.Element {
+  return (
+    <div className="filter-menu" style={{ left: x, top: y }} onClick={(event) => event.stopPropagation()}>
+      <div className="filter-menu-title">
+        <span>{column.label}</span>
+      </div>
+      <ColumnFilterFields columnKey={column.key} filter={filter} onChange={onChange} onClear={onClear} />
+    </div>
+  );
+}
+
+function ColumnFilterFields({ columnKey, filter, onChange, onClear }: { columnKey: SortKey; filter: ChartColumnFilter; onChange(patch: ChartColumnFilter): void; onClear(): void }): JSX.Element {
+  if (columnKey === 'songLevel' || columnKey === 'notes') {
+    return (
+      <div className="filter-input-line">
+        <div className="filter-field-row numeric-filter">
+          <label>
+            <span>Min</span>
+            <input type="number" value={filter.min ?? ''} onChange={(event) => onChange({ min: event.target.value })} />
+          </label>
+          <label>
+            <span>Max</span>
+            <input type="number" value={filter.max ?? ''} onChange={(event) => onChange({ max: event.target.value })} />
+          </label>
+        </div>
+        <button className="filter-clear-button" onClick={onClear} title="Clear filter"><X size={14} /></button>
+      </div>
+    );
+  }
+
+  if (columnKey === 'status') {
+    const selected = new Set(filter.statuses ?? []);
+    return (
+      <div className="status-filter-list">
+        {clearStatuses.map((status) => (
+          <label key={status}>
+            <input
+              type="checkbox"
+              checked={selected.has(status)}
+              onChange={() => {
+                const next = new Set(selected);
+                if (next.has(status)) next.delete(status);
+                else next.add(status);
+                onChange({ statuses: [...next] });
+              }}
+            />
+            <span className={`lamp ${statusClass(status)}`}>{status}</span>
+          </label>
+        ))}
+        <button className="status-clear-button" onClick={onClear}>Clear</button>
+      </div>
+    );
+  }
+
+  if (columnKey === 'url1' || columnKey === 'url2') {
+    return (
+      <>
+        <label className="filter-field">
+          <span>URL</span>
+          <select value={filter.urlMode ?? 'all'} onChange={(event) => onChange({ urlMode: event.target.value as UrlFilterMode })}>
+            <option value="all">All</option>
+            <option value="has">Has URL</option>
+            <option value="none">No URL</option>
+          </select>
+        </label>
+        <TextFilterInput value={filter.text ?? ''} onChange={(value) => onChange({ text: value })} onClear={onClear} />
+      </>
+    );
+  }
+
+  return <TextFilterInput value={filter.text ?? ''} onChange={(value) => onChange({ text: value })} onClear={onClear} />;
+}
+
+function TextFilterInput({ value, onChange, onClear }: { value: string; onChange(value: string): void; onClear(): void }): JSX.Element {
+  return (
+    <div className="filter-input-line">
+      <label className="filter-field">
+        <span>Contains</span>
+        <input autoFocus value={value} onChange={(event) => onChange(event.target.value)} />
+      </label>
+      <button className="filter-clear-button" onClick={onClear} title="Clear filter"><X size={14} /></button>
     </div>
   );
 }
@@ -409,6 +559,26 @@ function createColumnWidthState(): Record<SortKey, number> {
     tableName: 0,
     path: 0
   });
+}
+
+function emptyColumnFilter(): ChartColumnFilter {
+  return { text: '', min: '', max: '', statuses: [], urlMode: 'all' };
+}
+
+function positionFilterMenu(rect: DOMRect): { x: number; y: number } {
+  const maxX = window.innerWidth - filterMenuWidth - viewportMargin;
+  const belowY = rect.bottom + 4;
+  const aboveY = rect.top - filterMenuMaxHeight - 4;
+  const hasRoomBelow = belowY + filterMenuMaxHeight <= window.innerHeight - viewportMargin;
+
+  return {
+    x: clamp(rect.left, viewportMargin, Math.max(viewportMargin, maxX)),
+    y: hasRoomBelow ? belowY : clamp(aboveY, viewportMargin, window.innerHeight - filterMenuMaxHeight - viewportMargin)
+  };
+}
+
+function clamp(value: number, min: number, max: number): number {
+  return Math.min(Math.max(value, min), max);
 }
 
 function buildIrUrl(row: TableChartRow, target: IrTarget): string {

@@ -99,6 +99,7 @@ button, input, select { font: inherit; }
 .searchbox input { width: 100%; border: 0; outline: 0; }
 .export-button { min-width: 84px; justify-content: center; }
 .export-button:disabled { color: #8b95a1; background: #e5e9ee; cursor: default; }
+.clear-filters { min-width: 92px; justify-content: center; border: 1px solid #9aa7b6; border-radius: 3px; background: #fff; color: #202733; }
 .export-message { height: 24px; padding: 4px 10px; color: #2d4258; background: #eef6ff; border-bottom: 1px solid #c6d8ec; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 
 .list-region { position: relative; min-height: 0; flex: 1; display: flex; }
@@ -106,9 +107,13 @@ button, input, select { font: inherit; }
 .loading-overlay { position: absolute; inset: 0; display: grid; place-items: center; color: #233242; background: rgba(248, 250, 252, .72); font-weight: 700; }
 .chart-table { border-collapse: collapse; table-layout: fixed; font-size: 12px; }
 .chart-table th { position: sticky; top: 0; z-index: 1; height: 24px; color: #24313f; background: #eef2f6; border-bottom: 1px solid #aeb8c4; border-right: 1px solid #d4dbe3; text-align: left; padding: 0; }
-.sort-header { width: 100%; height: 24px; display: flex; align-items: center; justify-content: space-between; gap: 4px; padding: 0 10px 0 6px; border: 0; background: transparent; color: inherit; font-weight: 700; text-align: left; cursor: pointer; }
+.header-controls { height: 24px; display: flex; align-items: stretch; }
+.sort-header { min-width: 0; flex: 1; height: 24px; display: flex; align-items: center; justify-content: space-between; gap: 4px; padding: 0 4px 0 6px; border: 0; background: transparent; color: inherit; font-weight: 700; text-align: left; cursor: pointer; }
 .sort-header span { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .sort-header:hover { background: #dce6f0; }
+.filter-button { width: 22px; height: 24px; display: inline-grid; place-items: center; border: 0; border-left: 1px solid #d4dbe3; background: transparent; color: #607083; cursor: pointer; }
+.filter-button:hover { background: #dce6f0; color: #25374b; }
+.filter-button.active { color: #fff; background: #0c7edb; }
 .column-resizer { position: absolute; top: 0; right: -3px; z-index: 2; width: 7px; height: 100%; cursor: col-resize; }
 .column-resizer:hover { background: #8fb9df; }
 .resizing-column { cursor: col-resize; user-select: none; }
@@ -153,3 +158,21 @@ button, input, select { font: inherit; }
 .context-submenu-panel { position: absolute; left: 100%; top: -5px; display: none; width: 190px; padding: 4px; background: #fff; border: 1px solid #aeb8c4; box-shadow: 0 6px 20px rgba(18, 28, 38, .22); }
 .context-submenu:hover .context-submenu-panel,
 .context-submenu:focus-within .context-submenu-panel { display: block; }
+
+.filter-menu { position: fixed; z-index: 6; width: 300px; max-height: 300px; overflow: auto; padding: 8px; background: #fff; border: 1px solid #aeb8c4; box-shadow: 0 6px 20px rgba(18, 28, 38, .22); }
+.filter-menu-title { height: 24px; display: flex; align-items: center; justify-content: space-between; gap: 8px; margin-bottom: 6px; font-weight: 700; color: #24313f; }
+.filter-menu-title span { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.filter-input-line { min-width: 0; display: grid; grid-template-columns: minmax(0, 1fr) 24px; align-items: end; gap: 8px; }
+.filter-field { min-width: 0; display: flex; flex-direction: column; gap: 4px; color: #4b5b6c; }
+.filter-field input,
+.filter-field select,
+.numeric-filter input { width: 100%; min-width: 0; height: 26px; border: 1px solid #aeb8c4; border-radius: 3px; padding: 0 6px; color: #202733; background: #fff; }
+.filter-field-row { min-width: 0; display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 8px; }
+.numeric-filter label { min-width: 0; display: flex; flex-direction: column; gap: 4px; color: #4b5b6c; }
+.filter-clear-button { width: 24px; height: 26px; display: grid; place-items: center; border: 1px solid #aeb8c4; border-radius: 3px; background: #fff; color: #39495a; cursor: pointer; }
+.filter-clear-button:hover,
+.status-clear-button:hover { background: #e8f2ff; }
+.status-filter-list { max-height: 232px; overflow: auto; display: flex; flex-direction: column; gap: 4px; padding-right: 2px; }
+.status-filter-list label { min-height: 24px; display: flex; align-items: center; gap: 7px; color: #233242; }
+.status-filter-list input { margin: 0; }
+.status-clear-button { height: 26px; border: 1px solid #aeb8c4; border-radius: 3px; background: #fff; color: #39495a; cursor: pointer; }
