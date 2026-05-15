@@ -1,45 +1,27 @@
 # beatoraja Chart Manager
 
-Read-only desktop manager for beatoraja tables, chart search, missing-chart lookup, and per-player clear status browsing.
+beatoraja Chart Manager は、beatoraja に入っている段位表・難易度表と、自分の所持譜面、クリア状況をまとめて確認できる Windows 向けアプリです。
 
-## Safety Boundary
+![beatoraja Chart Manager の画面例](assets/sample.png)
 
-This app treats the beatoraja root, `songdata.db`, `songinfo.db`, `table/`, `player/`, and BMS folders as read-only inputs. It opens URLs and Explorer folders, but it does not download, extract, update databases, or modify beatoraja files. Development settings are stored under `manager/data/`; packaged Windows builds store settings in the standard Electron user-data directory. Table export writes only to the folder selected in the export dialog.
+## 主な機能
 
-## Development
+- beatoraja の table フォルダに入っている難易度表を一覧表示
+- 各表に含まれる譜面の所持状況を表示
+- NO SONG、NO PLAY、FAILED、CLEAR、HARD CLEAR、FULL COMBO などのクリア状況を表示
+- 曲名、アーティスト、ハッシュ、表名、フォルダ名などで検索
+- レベル、ノーツ数、クリア状況、URL の有無などで絞り込み
+- BMS フォルダ単位で、手元にある譜面を一覧表示
+- 譜面の配布 URL、IR ページ、保存先フォルダを右クリックメニューから開く
+- 同じ曲や差分らしい譜面を探す Same Song Search
+- 選択中の表を header.json / data.json として書き出し
 
-```powershell
-npm install
-npm run dev
-```
+## 配布版の起動
 
-Useful checks:
+配布 zip を展開し、`beatoraja Chart Manager.exe` を実行してください。
 
-```powershell
-npm run typecheck
-npm run lint
-npm test
-```
+初回起動時に beatoraja の場所が自動で見つからない場合は、画面上部の `Select beatoraja` から手動で選択してください。
 
-## Windows Release Build
+## ライセンス
 
-Build a Windows release zip that can run on machines without Node.js installed:
-
-```powershell
-npm install
-npm run release:win
-```
-
-The distributable zip is written to `release/` and includes Electron, the compiled app, production dependencies, and the `sql.js` WebAssembly file used to read beatoraja SQLite databases. Extract the zip on the target Windows machine and run `beatoraja Chart Manager.exe`.
-
-For a faster unpacked smoke-test build, use:
-
-```powershell
-npm run release:win:dir
-```
-
-For a single portable exe build on environments that allow Electron Builder's Windows signing helper extraction, use:
-
-```powershell
-npm run release:win:portable
-```
+このソフトウェアは GPL-3.0 ライセンスで公開されています。
