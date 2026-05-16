@@ -5,7 +5,7 @@ import { ArrowDown, ArrowUp, ArrowUpDown, ChevronRight, Copy, Download, External
 import type { DirectoryNode, ManagerState, TableChartRow, TableSummary } from '../shared/types';
 import type { ChartColumnFilter, ChartColumnFilters, ChartFilterCache, ChartFilterKey, UrlFilterMode } from '../shared/chartFilters';
 import { clearStatuses, countActiveColumnFilters, isColumnFilterActive, matchesChartFilters, normalizeSearchQuery, prepareColumnFilters } from '../shared/chartFilters';
-import { findSimilarRows, statusClass } from '../shared/domain';
+import { buildSimilarSearchRows, findSimilarRows, statusClass } from '../shared/domain';
 import { buildTableExport } from '../shared/exportTable';
 import { buildRowsAsync } from './asyncRows';
 import { positionContextMenu, positionFilterMenu } from './menuPosition';
@@ -126,7 +126,7 @@ export function App(): JSX.Element {
 
   const similarRows = useMemo(() => {
     if (!state || !similarTarget) return [];
-    return sortRows(findSimilarRows(similarTarget, state.rows), sort);
+    return sortRows(findSimilarRows(similarTarget, buildSimilarSearchRows(state.rows, state.libraryRows, similarTarget)), sort);
   }, [state, similarTarget, sort]);
 
   const activeTable = !selectedBmsRoot ? state?.tables.find((table) => table.id === selectedTableId) ?? null : null;

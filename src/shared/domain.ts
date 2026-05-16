@@ -27,13 +27,7 @@ export function normalizeText(value: string): string {
 }
 
 export function normalizeTitleBase(value: string): string {
-  return normalizeText(
-    value
-      .replace(/\[[^\]]+\]/g, ' ')
-      .replace(/【[^】]+】/g, ' ')
-      .replace(/\([^)]*\)/g, ' ')
-      .replace(/（[^）]*）/g, ' ')
-  );
+  return normalizeTitleText(stripTrailingDifficultyName(value));
 }
 
 export function rowMatchesSearch(row: TableChartRow, query: string): boolean {
@@ -56,44 +50,43 @@ export function rowMatchesSearch(row: TableChartRow, query: string): boolean {
 }
 
 export function findSimilarRows(target: TableChartRow, rows: TableChartRow[]): TableChartRow[] {
-  const targetTitle = normalizeTitleBase(target.title);
+  const targetTitle = normalizedTitle(target.title);
   const targetArtist = normalizeText(target.artist);
-  const targetFull = normalizeText(`${targetTitle} ${targetArtist}`);
+  const targetFull = `${targetTitle.text} ${targetArtist}`.trim();
   const candidates: TableChartRow[] = [];
-
-  if (!targetTitle && !target.orgMd5 && !target.md5) return [];
+  const canMatchOtherRows = Boolean(targetTitle.text || target.orgMd5 || target.md5);
 
   for (const row of rows) {
-    if (row.id === target.id) continue;
-
     let confidence = 0;
     let matchReason = '';
 
-    if (target.orgMd5 && (row.md5 === target.orgMd5 || row.orgMd5 === target.orgMd5)) {
+    if (row.id === target.id) {
+      confidence = 1;
+      matchReason = 'selected chart';
+    } else if (!canMatchOtherRows) {
+      confidence = 0;
+    } else if (target.orgMd5 && (row.md5 === target.orgMd5 || row.orgMd5 === target.orgMd5)) {
       confidence = 0.98;
       matchReason = 'parent hash';
     } else if (target.md5 && row.orgMd5 && row.orgMd5 === target.md5) {
       confidence = 0.96;
       matchReason = 'parent hash';
     } else {
-      const rowTitle = normalizeTitleBase(row.title);
+      const rowTitle = normalizedTitle(row.title);
       const rowArtist = normalizeText(row.artist);
-      const rowFull = normalizeText(`${rowTitle} ${rowArtist}`);
+      const rowFull = `${rowTitle.text} ${rowArtist}`.trim();
 
-      if (!rowTitle) {
+      if (!rowTitle.text) {
         confidence = 0;
       } else if (targetFull && rowFull === targetFull) {
         confidence = 0.94;
         matchReason = 'title + artist';
-      } else if (targetTitle && rowTitle === targetTitle && targetArtist && rowArtist.includes(targetArtist)) {
+      } else if (sameNormalizedTitle(targetTitle, rowTitle) && targetArtist && rowArtist.includes(targetArtist)) {
         confidence = 0.88;
         matchReason = 'title + artist';
-      } else if (targetTitle.length > 4 && rowTitle === targetTitle) {
+      } else if (targetTitle.text.length > 4 && sameNormalizedTitle(targetTitle, rowTitle)) {
         confidence = 0.8;
         matchReason = 'title';
-      } else if (targetTitle.length > 5 && rowTitle.length > 3 && (rowTitle.includes(targetTitle) || targetTitle.includes(rowTitle))) {
-        confidence = 0.68;
-        matchReason = 'partial title';
       }
     }
 
@@ -109,4 +102,97 @@ export function findSimilarRows(target: TableChartRow, rows: TableChartRow[]): T
     if (b.status === 'NO SONG' && a.status !== 'NO SONG') return 1;
     return a.title.localeCompare(b.title, 'ja');
   }).slice(0, 500);
+}
+
+export function buildSimilarSearchRows(
+  tableRows: TableChartRow[],
+  libraryRows: TableChartRow[],
+  target?: TableChartRow
+): TableChartRow[] {
+  const tableHashes = new Set(tableRows.flatMap(rowHashKeys));
+  const libraryOnlyRows = libraryRows
+    .filter((row) => !rowHashKeys(row).some((hash) => tableHashes.has(hash)))
+    .map((row) => ({ ...row, level: '' }));
+  const rows = [...tableRows, ...libraryOnlyRows];
+
+  if (target && !rows.some((row) => row.id === target.id)) {
+    const targetRow = target.tableName === 'BMS Path' ? { ...target, level: '' } : target;
+    return [targetRow, ...rows];
+  }
+
+  return rows;
+}
+
+interface NormalizedTitle {
+  text: string;
+  key: string;
+}
+
+const wrappedDifficultyPatterns = [
+  /\s*(?:\[[^\]]+\]|【[^】]+】)\s*$/,
+  /\s+[‐‑‒–—―-]\s*[^‐‑‒–—―-]+\s*[‐‑‒–—―-]\s*$/
+];
+
+function normalizedTitle(value: string): NormalizedTitle {
+  const text = normalizeTitleBase(value);
+  return { text, key: titleKey(text) };
+}
+
+function sameNormalizedTitle(a: NormalizedTitle, b: NormalizedTitle): boolean {
+  return a.text === b.text || (!!a.key && a.key === b.key);
+}
+
+function stripTrailingDifficultyName(value: string): string {
+  let title = value.normalize('NFKC').trim();
+  let changed = true;
+
+  while (changed) {
+    changed = false;
+    for (const pattern of wrappedDifficultyPatterns) {
+      const next = title.replace(pattern, '').trim();
+      if (next !== title) {
+        title = next;
+        changed = true;
+      }
+    }
+  }
+
+  const parenthesized = title.match(/\s*\(([^()]*)\)\s*$/);
+  if (parenthesized && isLikelyDifficultyName(parenthesized[1])) {
+    title = title.slice(0, parenthesized.index).trim();
+  }
+
+  return title;
+}
+
+function normalizeTitleText(value: string): string {
+  return value
+    .normalize('NFKC')
+    .toLowerCase()
+    .replace(/[[\]【】()（）{}]/g, ' ')
+    .replace(/[‐‑‒–—―-]/g, ' ')
+    .replace(/[#★☆◆◇▼▽▲△◎○●]+/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim();
+}
+
+function titleKey(value: string): string {
+  return value.replace(/\s+/g, '');
+}
+
+function isLikelyDifficultyName(value: string): boolean {
+  const normalized = normalizeTitleText(value);
+  if (!normalized) return false;
+  if (/^(sp|dp|another|hyper|normal|insane|easy|hard|ex|mx|maniac|lunatic|beginner|master|stella|sl|sabun)\b/.test(normalized)) {
+    return true;
+  }
+  if (/^(a|h|n|e|b|i|l|ex)$/i.test(value.trim())) return true;
+  return !/\s/.test(normalized) && normalized.length <= 16 && !/^[a-z0-9]+$/i.test(normalized);
+}
+
+function rowHashKeys(row: TableChartRow): string[] {
+  return [
+    row.sha256 ? `sha256:${row.sha256}` : '',
+    row.md5 ? `md5:${row.md5}` : ''
+  ].filter(Boolean);
 }
