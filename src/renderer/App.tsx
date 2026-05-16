@@ -8,10 +8,13 @@ import { clearStatuses, countActiveColumnFilters, isColumnFilterActive, matchesC
 import { findSimilarRows, statusClass } from '../shared/domain';
 import { buildTableExport } from '../shared/exportTable';
 import { buildRowsAsync } from './asyncRows';
+import { positionContextMenu, positionFilterMenu } from './menuPosition';
+import type { MenuSide } from './menuPosition';
 
 type ContextMenuState = {
   x: number;
   y: number;
+  submenuSide: MenuSide;
   row: TableChartRow;
 } | null;
 
@@ -21,10 +24,6 @@ type SortState = { key: SortKey; direction: SortDirection };
 type IrTarget = 'lr2' | 'mocha' | 'minir';
 type TableColumn = { key: SortKey; label: string; width: number; minWidth: number };
 type FilterMenuState = { key: SortKey; x: number; y: number } | null;
-
-const filterMenuWidth = 300;
-const filterMenuMaxHeight = 300;
-const viewportMargin = 8;
 
 const defaultSort: SortState = { key: 'title', direction: 'asc' };
 const collator = new Intl.Collator('ja', { numeric: true, sensitivity: 'base' });
@@ -175,7 +174,7 @@ export function App(): JSX.Element {
     event.stopPropagation();
     const rect = event.currentTarget.getBoundingClientRect();
     setContextMenu(null);
-    setFilterMenu({ key, ...positionFilterMenu(rect) });
+    setFilterMenu({ key, ...positionFilterMenu(rect, currentViewport()) });
   }
 
   function updateColumnFilter(key: SortKey, patch: ChartColumnFilter): void {
@@ -200,8 +199,12 @@ export function App(): JSX.Element {
 
   function openContextMenu(event: React.MouseEvent, row: TableChartRow): void {
     event.preventDefault();
+    event.stopPropagation();
     setFilterMenu(null);
-    setContextMenu({ x: event.clientX, y: event.clientY, row });
+    setContextMenu({
+      ...positionContextMenu({ x: event.clientX, y: event.clientY }, currentViewport()),
+      row
+    });
   }
 
   function openExternalFromMenu(url: string): void {
@@ -332,7 +335,7 @@ export function App(): JSX.Element {
       )}
 
       {contextMenu && (
-        <div className="context-menu" style={{ left: contextMenu.x, top: contextMenu.y }} onClick={(event) => event.stopPropagation()}>
+        <div className={`context-menu submenu-${contextMenu.submenuSide}`} style={{ left: contextMenu.x, top: contextMenu.y }} onClick={(event) => event.stopPropagation()}>
           <button disabled={!contextMenu.row.url1} onClick={() => openExternalFromMenu(contextMenu.row.url1)}><ExternalLink size={14} />Open URL1</button>
           <button disabled={!contextMenu.row.url2} onClick={() => openExternalFromMenu(contextMenu.row.url2)}><ExternalLink size={14} />Open URL2</button>
           <button disabled={!contextMenu.row.path && !contextMenu.row.folder} onClick={() => openPathFromMenu(contextMenu.row)}><FolderOpen size={14} />Open in Explorer</button>
@@ -350,6 +353,10 @@ export function App(): JSX.Element {
       )}
     </div>
   );
+}
+
+function currentViewport(): { width: number; height: number } {
+  return { width: window.innerWidth, height: window.innerHeight };
 }
 
 function ChartTable({ rows, compact = false, sort, columnFilters, onSort, onFilterClick, onContextMenu }: { rows: TableChartRow[]; compact?: boolean; sort: SortState; columnFilters: ChartColumnFilters; onSort(key: SortKey): void; onFilterClick(event: React.MouseEvent, key: SortKey): void; onContextMenu(event: React.MouseEvent, row: TableChartRow): void }): JSX.Element {
@@ -563,22 +570,6 @@ function createColumnWidthState(): Record<SortKey, number> {
 
 function emptyColumnFilter(): ChartColumnFilter {
   return { text: '', min: '', max: '', statuses: [], urlMode: 'all' };
-}
-
-function positionFilterMenu(rect: DOMRect): { x: number; y: number } {
-  const maxX = window.innerWidth - filterMenuWidth - viewportMargin;
-  const belowY = rect.bottom + 4;
-  const aboveY = rect.top - filterMenuMaxHeight - 4;
-  const hasRoomBelow = belowY + filterMenuMaxHeight <= window.innerHeight - viewportMargin;
-
-  return {
-    x: clamp(rect.left, viewportMargin, Math.max(viewportMargin, maxX)),
-    y: hasRoomBelow ? belowY : clamp(aboveY, viewportMargin, window.innerHeight - filterMenuMaxHeight - viewportMargin)
-  };
-}
-
-function clamp(value: number, min: number, max: number): number {
-  return Math.min(Math.max(value, min), max);
 }
 
 function buildIrUrl(row: TableChartRow, target: IrTarget): string {
