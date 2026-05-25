@@ -6,10 +6,11 @@ import type { DirectoryNode, ManagerState, TableChartRow, TableSummary } from '.
 import type { ChartColumnFilter, ChartColumnFilters, ChartFilterCache, ChartFilterKey, UrlFilterMode } from '../shared/chartFilters';
 import { clearStatuses, countActiveColumnFilters, isColumnFilterActive, matchesChartFilters, normalizeSearchQuery, prepareColumnFilters } from '../shared/chartFilters';
 import { buildSimilarSearchRows, findSimilarRows, statusClass } from '../shared/domain';
-import { buildTableExport } from '../shared/exportTable';
+import { buildBmsPathExport, buildTableExport } from '../shared/exportTable';
 import { buildRowsAsync } from './asyncRows';
 import { positionContextMenu, positionFilterMenu } from './menuPosition';
 import type { MenuSide } from './menuPosition';
+import packageJson from '../../package.json';
 
 type ContextMenuState = {
   x: number;
@@ -26,6 +27,7 @@ type TableColumn = { key: SortKey; label: string; width: number; minWidth: numbe
 type FilterMenuState = { key: SortKey; x: number; y: number } | null;
 
 const defaultSort: SortState = { key: 'title', direction: 'asc' };
+const editorVersion = String(packageJson.version ?? '');
 const collator = new Intl.Collator('ja', { numeric: true, sensitivity: 'base' });
 const chartColumns: TableColumn[] = [
   { key: 'level', label: 'FOLDER', width: 120, minWidth: 86 },
@@ -154,10 +156,12 @@ export function App(): JSX.Element {
     setSearchText(value);
   }
 
-  async function exportActiveTable(): Promise<void> {
-    if (!activeTable || !state) return;
+  async function exportActiveSelection(): Promise<void> {
+    if ((!activeTable && !selectedBmsRoot) || !state) return;
     setExportMessage('Exporting...');
-    const payload = buildTableExport(activeTable, state.rows);
+    const payload = activeTable
+      ? buildTableExport(activeTable, state.rows, undefined, editorVersion)
+      : buildBmsPathExport(selectedBmsRoot!, state.libraryRows, undefined, editorVersion);
     const result = await window.managerApi.exportTable(payload);
     setExportMessage(result.canceled ? 'Export canceled' : `Exported: ${result.directory}`);
   }
@@ -298,7 +302,7 @@ export function App(): JSX.Element {
                 <span>{activeFilterCount} filters</span>
               </button>
             )}
-            <button className="icon-text export-button" disabled={!activeTable} onClick={() => void exportActiveTable()} title="Export selected table">
+            <button className="icon-text export-button" disabled={!activeTable && !selectedBmsRoot} onClick={() => void exportActiveSelection()} title={selectedBmsRoot ? 'Export selected BMS Path' : 'Export selected table'}>
               <Download size={16} />
               <span>Export</span>
             </button>

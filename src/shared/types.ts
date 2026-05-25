@@ -55,6 +55,7 @@ export interface TableChartRow {
   md5: string;
   sha256: string;
   orgMd5: string;
+  orgMd5s?: string[];
   url1: string;
   url2: string;
   ipfs: string;
@@ -70,6 +71,7 @@ export interface TableChartRow {
   density: number | null;
   path: string;
   folder: string;
+  addDate?: number | null;
   matchReason?: string;
   confidence?: number;
 }

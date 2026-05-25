@@ -21,12 +21,14 @@ interface SongDbRow {
   genre?: string;
   artist?: string;
   subartist?: string;
+  parent?: string;
   path?: string;
   folder?: string;
   level?: number;
   difficulty?: number;
   mode?: number;
   notes?: number;
+  adddate?: number;
   charthash?: string;
 }
 
@@ -218,7 +220,7 @@ export class ManagerRepository {
     try {
       const db = await openReadonlyDatabase(dbPath, this.appRoot);
       try {
-        return selectAll<SongDbRow>(db, 'SELECT md5, sha256, title, subtitle, genre, artist, subartist, path, folder, level, difficulty, mode, notes, charthash FROM song');
+        return selectAll<SongDbRow>(db, 'SELECT md5, sha256, title, subtitle, genre, artist, subartist, parent, path, folder, level, difficulty, mode, notes, adddate, charthash FROM song');
       } finally {
         db.close();
       }
@@ -307,15 +309,18 @@ function hydrateRows(
 function createLibraryRows(songs: SongDbRow[], infos: SongInfoRow[], scores: ScoreDbRow[]): TableChartRow[] {
   const infoBySha = new Map(infos.filter((info) => info.sha256).map((info) => [lower(info.sha256), info]));
   const scoreBySha = bestScoresBySha(scores);
+  const md5sByFolder = songMd5sByFolder(songs);
   return songs
     .filter((song) => song.sha256 || song.md5)
     .map((song, index) => {
       const sha = lower(song.sha256);
+      const md5 = lower(song.md5);
       const info = sha ? infoBySha.get(sha) : undefined;
       const score = sha ? scoreBySha.get(sha) : undefined;
       const clear = numberOrNull(score?.clear);
+      const folderMd5s = md5sByFolder.get(folderKey(String(song.path ?? ''))) ?? [];
       return {
-        id: `library:${sha || lower(song.md5) || index}`,
+        id: `library:${sha || md5 || index}`,
         tableId: '__library',
         tableName: 'BMS Path',
         tableUrl: '',
@@ -324,9 +329,10 @@ function createLibraryRows(songs: SongDbRow[], infos: SongInfoRow[], scores: Sco
         subtitle: String(song.subtitle ?? ''),
         artist: String(song.artist ?? ''),
         genre: String(song.genre ?? ''),
-        md5: lower(song.md5),
+        md5,
         sha256: sha,
-        orgMd5: '',
+        orgMd5: folderMd5s[0] ?? lower(song.parent),
+        orgMd5s: folderMd5s,
         url1: '',
         url2: '',
         ipfs: '',
@@ -341,7 +347,8 @@ function createLibraryRows(songs: SongDbRow[], infos: SongInfoRow[], scores: Sco
         mainBpm: numberOrNull(info?.mainbpm),
         density: numberOrNull(info?.density),
         path: String(song.path ?? ''),
-        folder: String(song.folder ?? '')
+        folder: String(song.folder ?? ''),
+        addDate: numberOrNull(song.adddate)
       } satisfies TableChartRow;
     });
 }
@@ -446,6 +453,25 @@ function numberOrNull(value: unknown): number | null {
 
 function uniqueStrings(values: string[]): string[] {
   return [...new Set(values.filter(Boolean))];
+}
+
+function songMd5sByFolder(songs: SongDbRow[]): Map<string, string[]> {
+  const map = new Map<string, string[]>();
+  for (const song of songs) {
+    const key = folderKey(String(song.path ?? ''));
+    const md5 = lower(song.md5);
+    if (!key || !md5) continue;
+    const md5s = map.get(key) ?? [];
+    md5s.push(md5);
+    map.set(key, md5s);
+  }
+  return map;
+}
+
+function folderKey(filePath: string): string {
+  const normalized = normalizePath(filePath);
+  const separator = normalized.lastIndexOf('/');
+  return separator >= 0 ? normalized.slice(0, separator) : normalized;
 }
 
 function normalizePath(value: string): string {
