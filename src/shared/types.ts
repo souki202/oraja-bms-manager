@@ -104,6 +104,12 @@ export interface OpenPathPayload {
   folder: string;
 }
 
+export interface BokutachiResolvePayload {
+  game: 'bms-7k' | 'bms-14k' | 'pms-controller';
+  sha256: string;
+  md5: string;
+}
+
 export interface ExportPayload {
   header: Record<string, unknown>;
   data: Record<string, unknown>[];

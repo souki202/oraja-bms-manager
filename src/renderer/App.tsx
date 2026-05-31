@@ -7,6 +7,7 @@ import type { ChartColumnFilter, ChartColumnFilters, ChartFilterCache, ChartFilt
 import { clearStatuses, countActiveColumnFilters, isColumnFilterActive, matchesChartFilters, normalizeSearchQuery, prepareColumnFilters } from '../shared/chartFilters';
 import { buildSimilarSearchRows, findSimilarRows, statusClass } from '../shared/domain';
 import { buildBmsPathExport, buildTableExport } from '../shared/exportTable';
+import { bokutachiGameForMode, buildStaticIrUrl, canOpenBokutachi, hasAnyIrTarget } from '../shared/ir';
 import { buildRowsAsync } from './asyncRows';
 import { positionContextMenu, positionFilterMenu } from './menuPosition';
 import type { MenuSide } from './menuPosition';
@@ -22,7 +23,7 @@ type ContextMenuState = {
 type SortKey = 'level' | 'songLevel' | 'title' | 'artist' | 'url1' | 'url2' | 'status' | 'notes' | 'tableName' | 'path';
 type SortDirection = 'asc' | 'desc';
 type SortState = { key: SortKey; direction: SortDirection };
-type IrTarget = 'lr2' | 'mocha' | 'minir';
+type IrTarget = 'bokutachi' | 'mocha' | 'minir';
 type TableColumn = { key: SortKey; label: string; width: number; minWidth: number };
 type FilterMenuState = { key: SortKey; x: number; y: number } | null;
 
@@ -67,6 +68,8 @@ export function App(): JSX.Element {
   const [filterMenu, setFilterMenu] = useState<FilterMenuState>(null);
   const [columnFilters, setColumnFilters] = useState<ChartColumnFilters>({});
   const [similarTarget, setSimilarTarget] = useState<TableChartRow | null>(null);
+  const [toastMessage, setToastMessage] = useState('');
+  const toastTimeoutRef = useRef<number | null>(null);
 
   const rowFilterCache = useMemo<ChartFilterCache>(() => new WeakMap(), [state]);
   const preparedColumnFilters = useMemo(() => prepareColumnFilters(columnFilters), [columnFilters]);
@@ -74,6 +77,12 @@ export function App(): JSX.Element {
 
   useEffect(() => {
     void load();
+  }, []);
+
+  useEffect(() => {
+    return () => {
+      if (toastTimeoutRef.current !== null) window.clearTimeout(toastTimeoutRef.current);
+    };
   }, []);
 
   async function load(): Promise<void> {
@@ -216,10 +225,14 @@ export function App(): JSX.Element {
     setContextMenu(null);
   }
 
-  function openIrFromMenu(row: TableChartRow, target: IrTarget): void {
-    const url = buildIrUrl(row, target);
-    if (url) void window.managerApi.openExternal(url);
+  async function openIrFromMenu(row: TableChartRow, target: IrTarget): Promise<void> {
     setContextMenu(null);
+    const url = target === 'bokutachi' ? await resolveBokutachiUrl(row) : buildStaticIrUrl(row, target);
+    if (url) {
+      void window.managerApi.openExternal(url);
+    } else if (target === 'bokutachi') {
+      showToast('bokutachiに登録された譜面が見つかりませんでした。');
+    }
   }
 
   function openPathFromMenu(row: TableChartRow): void {
@@ -344,19 +357,30 @@ export function App(): JSX.Element {
           <button disabled={!contextMenu.row.url2} onClick={() => openExternalFromMenu(contextMenu.row.url2)}><ExternalLink size={14} />Open URL2</button>
           <button disabled={!contextMenu.row.path && !contextMenu.row.folder} onClick={() => openPathFromMenu(contextMenu.row)}><FolderOpen size={14} />Open in Explorer</button>
           <div className="context-submenu">
-            <button disabled={!contextMenu.row.md5 && !contextMenu.row.sha256}><ExternalLink size={14} /><span>Open IR</span><ChevronRight size={14} /></button>
+            <button disabled={!hasAnyIrTarget(contextMenu.row)}><ExternalLink size={14} /><span>Open IR</span><ChevronRight size={14} /></button>
             <div className="context-submenu-panel">
-              <button disabled={!contextMenu.row.md5} onClick={() => openIrFromMenu(contextMenu.row, 'lr2')}>LR2</button>
-              <button disabled={!contextMenu.row.sha256} onClick={() => openIrFromMenu(contextMenu.row, 'mocha')}>mocha-repository</button>
-              <button disabled={!contextMenu.row.sha256} onClick={() => openIrFromMenu(contextMenu.row, 'minir')}>MinIR</button>
+              <button disabled={!canOpenBokutachi(contextMenu.row)} onClick={() => void openIrFromMenu(contextMenu.row, 'bokutachi')}>bokutachi</button>
+              <button disabled={!contextMenu.row.sha256} onClick={() => void openIrFromMenu(contextMenu.row, 'mocha')}>mocha-repository</button>
+              <button disabled={!contextMenu.row.sha256} onClick={() => void openIrFromMenu(contextMenu.row, 'minir')}>MinIR</button>
             </div>
           </div>
           <button onClick={() => { void navigator.clipboard.writeText(contextMenu.row.sha256 || contextMenu.row.md5); setContextMenu(null); }}><Copy size={14} />Copy Hash</button>
           <button onClick={() => { setSimilarTarget(contextMenu.row); setContextMenu(null); }}><GitBranch size={14} />Same Song Search</button>
         </div>
       )}
+
+      {toastMessage && <div className="toast-message" role="status" aria-live="polite">{toastMessage}</div>}
     </div>
   );
+
+  function showToast(message: string): void {
+    if (toastTimeoutRef.current !== null) window.clearTimeout(toastTimeoutRef.current);
+    setToastMessage(message);
+    toastTimeoutRef.current = window.setTimeout(() => {
+      setToastMessage('');
+      toastTimeoutRef.current = null;
+    }, 3500);
+  }
 }
 
 function currentViewport(): { width: number; height: number } {
@@ -576,12 +600,10 @@ function emptyColumnFilter(): ChartColumnFilter {
   return { text: '', min: '', max: '', statuses: [], urlMode: 'all' };
 }
 
-function buildIrUrl(row: TableChartRow, target: IrTarget): string {
-  const hash = (target === 'lr2' ? row.md5 : row.sha256).trim().toLowerCase();
-  if (!hash) return '';
-  if (target === 'lr2') return `http://www.dream-pro.info/~lavalse/LR2IR/search.cgi?mode=ranking&bmsmd5=${hash}`;
-  if (target === 'mocha') return `https://mocha-repository.info/song.php?sha256=${hash}`;
-  return `https://www.gaftalk.com/minir/#/viewer/song/${hash}/0`;
+async function resolveBokutachiUrl(row: TableChartRow): Promise<string> {
+  const game = bokutachiGameForMode(row.mode);
+  if (!game || (!row.sha256 && !row.md5)) return '';
+  return await window.managerApi.resolveBokutachiChartUrl({ game, sha256: row.sha256, md5: row.md5 }) ?? '';
 }
 
 function makeSubtitle(selectedBmsRoot: DirectoryNode | null, activeTable: { chartCount: number; missingCount: number } | null, visibleCount: number): string {

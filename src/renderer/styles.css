@@ -160,6 +160,22 @@ button, input, select { font: inherit; }
 .context-submenu:hover .context-submenu-panel,
 .context-submenu:focus-within .context-submenu-panel { display: block; }
 
+.toast-message {
+  position: fixed;
+  right: 14px;
+  bottom: 14px;
+  z-index: 8;
+  max-width: min(420px, calc(100vw - 28px));
+  padding: 8px 12px;
+  color: #6e2d22;
+  background: #fff0ed;
+  border: 1px solid #d59a90;
+  box-shadow: 0 6px 18px rgba(18, 28, 38, .18);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
 .filter-menu { position: fixed; z-index: 6; width: 300px; max-height: 300px; overflow: auto; padding: 8px; background: #fff; border: 1px solid #aeb8c4; box-shadow: 0 6px 20px rgba(18, 28, 38, .22); }
 .filter-menu-title { height: 24px; display: flex; align-items: center; justify-content: space-between; gap: 8px; margin-bottom: 6px; font-weight: 700; color: #24313f; }
 .filter-menu-title span { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }

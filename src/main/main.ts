@@ -2,7 +2,8 @@ import { app, BrowserWindow, dialog, ipcMain, shell } from 'electron';
 import fs from 'node:fs/promises';
 import path from 'node:path';
 import { ManagerRepository } from './repository';
-import type { AppSettings, ExportPayload, ExportResult, OpenPathPayload } from '../shared/types';
+import { extractBokutachiChartId } from '../shared/ir';
+import type { AppSettings, BokutachiResolvePayload, ExportPayload, ExportResult, OpenPathPayload } from '../shared/types';
 
 const appRoot = app.getAppPath();
 const dataRoot = app.isPackaged ? app.getPath('userData') : path.join(appRoot, 'data');
@@ -67,6 +68,22 @@ ipcMain.handle('table:export', async (_event, payload: ExportPayload): Promise<E
   return { canceled: false, directory, headerPath, dataPath };
 });
 
+ipcMain.handle('ir:resolve-bokutachi', async (_event, payload: BokutachiResolvePayload): Promise<string | null> => {
+  const game = validateBokutachiGame(payload.game);
+  if (!game) return null;
+
+  const identifiers = [payload.sha256, payload.md5]
+    .map((hash) => hash.trim().toLowerCase())
+    .filter((hash) => /^[0-9a-f]{32}$/.test(hash) || /^[0-9a-f]{64}$/.test(hash));
+
+  for (const identifier of identifiers) {
+    const chartId = await resolveBokutachiChartId(game, identifier);
+    if (chartId) return `https://boku.tachi.ac/games/${game}/charts/${encodeURIComponent(chartId)}`;
+  }
+
+  return null;
+});
+
 ipcMain.handle('shell:open-external', async (_event, url: string) => {
   if (!/^https?:\/\//i.test(url) && !/^ipfs:\/\//i.test(url)) return false;
   await shell.openExternal(url);
@@ -88,6 +105,27 @@ ipcMain.handle('shell:open-path', async (_event, payload: OpenPathPayload) => {
   }
   return true;
 });
+
+function validateBokutachiGame(game: string): BokutachiResolvePayload['game'] | null {
+  if (game === 'bms-7k' || game === 'bms-14k' || game === 'pms-controller') return game;
+  return null;
+}
+
+async function resolveBokutachiChartId(game: BokutachiResolvePayload['game'], identifier: string): Promise<string | null> {
+  try {
+    const response = await fetch(`https://boku.tachi.ac/api/v1/games/${game}/charts/resolve`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ matchType: 'bmsChartHash', identifier })
+    });
+    if (!response.ok) return null;
+
+    return extractBokutachiChartId(await response.json());
+  } catch (error) {
+    console.error('Failed to resolve bokutachi chart', error);
+    return null;
+  }
+}
 
 app.whenReady().then(() => {
   createWindow();
