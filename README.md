@@ -1,27 +1,29 @@
 # beatoraja Chart Manager
 
-beatoraja Chart Manager は、beatoraja に入っている段位表・難易度表と、自分の所持譜面、クリア状況をまとめて確認できる Windows 向けアプリです。
+[日本語 README](readme-ja.md)
 
-![beatoraja Chart Manager の画面例](assets/sample.png)
+beatoraja Chart Manager is a Windows app for viewing the grade and difficulty tables installed in beatoraja alongside your local chart library and clear statuses.
 
-## 主な機能
+![beatoraja Chart Manager screenshot](assets/sample.png)
 
-- beatoraja の table フォルダに入っている難易度表を一覧表示
-- 各表に含まれる譜面の所持状況を表示
-- NO SONG、NO PLAY、FAILED、CLEAR、HARD CLEAR、FULL COMBO などのクリア状況を表示
-- 曲名、アーティスト、ハッシュ、表名、フォルダ名などで検索
-- レベル、ノーツ数、クリア状況、URL の有無などで絞り込み
-- BMS フォルダ単位で、手元にある譜面を一覧表示
-- 譜面の配布 URL、IR ページ、保存先フォルダを右クリックメニューから開く
-- 同じ曲や差分らしい譜面を探す Same Song Search
-- 選択中の表を header.json / data.json として書き出し
+## Features
 
-## 配布版の起動
+- Lists difficulty tables found in beatoraja's `table` folder
+- Shows whether each chart in a table is available locally
+- Displays clear statuses such as NO SONG, NO PLAY, FAILED, CLEAR, HARD CLEAR, and FULL COMBO
+- Searches by title, artist, hash, table name, folder name, and more
+- Filters by level, note count, clear status, URL availability, and more
+- Browses locally available charts by BMS folder
+- Opens chart distribution URLs, IR pages, and local folders from the context menu
+- Same Song Search for finding charts that appear to be the same song or related variations
+- Exports the selected table as `header.json` / `data.json`
 
-配布 zip を展開し、`beatoraja Chart Manager.exe` を実行してください。
+## Running the Release Build
 
-初回起動時に beatoraja の場所が自動で見つからない場合は、画面上部の `Select beatoraja` から手動で選択してください。
+Extract the release zip, then run `beatoraja Chart Manager.exe`.
 
-## ライセンス
+If beatoraja is not found automatically on first launch, choose it manually from `Select beatoraja` at the top of the window.
 
-このソフトウェアは GPL-3.0 ライセンスで公開されています。
+## License
+
+This software is released under the GPL-3.0 license.
