@@ -306,7 +306,6 @@ export function App(): JSX.Element {
       showToast(result.message);
       if (result.ok) {
         setImportAnalysis(null);
-        await load();
       }
     } catch (error) {
       showToast(error instanceof Error ? error.message : String(error));
