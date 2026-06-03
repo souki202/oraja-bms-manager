@@ -1,8 +1,8 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import type { JSX } from 'react';
 import { useVirtualizer } from '@tanstack/react-virtual';
-import { ArrowDown, ArrowUp, ArrowUpDown, ChevronRight, Copy, Download, ExternalLink, Filter, FolderOpen, GitBranch, RefreshCw, Search, Settings, X } from 'lucide-react';
-import type { DirectoryNode, ManagerState, TableChartRow, TableSummary } from '../shared/types';
+import { ArrowDown, ArrowUp, ArrowUpDown, ChevronRight, Copy, Download, ExternalLink, Filter, FolderOpen, GitBranch, RefreshCw, Search, Settings, Upload, X } from 'lucide-react';
+import type { ChartImportAnalysis, DirectoryNode, ImportCandidate, ManagerState, TableChartRow, TableSummary } from '../shared/types';
 import type { ChartColumnFilter, ChartColumnFilters, ChartFilterCache, ChartFilterKey, UrlFilterMode } from '../shared/chartFilters';
 import { clearStatuses, countActiveColumnFilters, isColumnFilterActive, matchesChartFilters, normalizeSearchQuery, prepareColumnFilters } from '../shared/chartFilters';
 import { buildSimilarSearchRows, findSimilarRows, statusClass } from '../shared/domain';
@@ -69,6 +69,11 @@ export function App(): JSX.Element {
   const [columnFilters, setColumnFilters] = useState<ChartColumnFilters>({});
   const [similarTarget, setSimilarTarget] = useState<TableChartRow | null>(null);
   const [toastMessage, setToastMessage] = useState('');
+  const [isDragOver, setIsDragOver] = useState(false);
+  const [importAnalysis, setImportAnalysis] = useState<ChartImportAnalysis | null>(null);
+  const [selectedImportCandidateId, setSelectedImportCandidateId] = useState('');
+  const [isImportBusy, setIsImportBusy] = useState(false);
+  const [importBusyMessage, setImportBusyMessage] = useState('');
   const toastTimeoutRef = useRef<number | null>(null);
 
   const rowFilterCache = useMemo<ChartFilterCache>(() => new WeakMap(), [state]);
@@ -84,6 +89,10 @@ export function App(): JSX.Element {
       if (toastTimeoutRef.current !== null) window.clearTimeout(toastTimeoutRef.current);
     };
   }, []);
+
+  useEffect(() => {
+    setSelectedImportCandidateId(importAnalysis?.candidates[0]?.id ?? '');
+  }, [importAnalysis]);
 
   async function load(): Promise<void> {
     setLoading(true);
@@ -240,12 +249,79 @@ export function App(): JSX.Element {
     setContextMenu(null);
   }
 
+  function handleDragOver(event: React.DragEvent): void {
+    event.preventDefault();
+    if (!isDragOver) setIsDragOver(true);
+  }
+
+  function handleDragLeave(event: React.DragEvent): void {
+    const related = event.relatedTarget;
+    if (related instanceof Node && event.currentTarget.contains(related)) return;
+    setIsDragOver(false);
+  }
+
+  async function handleDrop(event: React.DragEvent): Promise<void> {
+    event.preventDefault();
+    setIsDragOver(false);
+    setContextMenu(null);
+    setFilterMenu(null);
+
+    const paths = [...event.dataTransfer.files]
+      .map((file) => window.managerApi.getPathForFile(file))
+      .filter(Boolean);
+    if (paths.length === 0) {
+      showToast('No local file path was found in the dropped item.');
+      return;
+    }
+
+    setIsImportBusy(true);
+    setImportBusyMessage('Searching destination...');
+    try {
+      const analysis = await window.managerApi.analyzeDroppedChart(paths);
+      if (!analysis.ok) {
+        showToast(analysis.message);
+        return;
+      }
+      setImportAnalysis(analysis);
+    } catch (error) {
+      showToast(error instanceof Error ? error.message : String(error));
+    } finally {
+      setIsImportBusy(false);
+      setImportBusyMessage('');
+    }
+  }
+
+  async function confirmImportCandidate(): Promise<void> {
+    if (!importAnalysis?.dropped || !selectedImportCandidateId) return;
+    const candidate = importAnalysis.candidates.find((item) => item.id === selectedImportCandidateId);
+    if (!candidate) return;
+
+    setIsImportBusy(true);
+    setImportBusyMessage('Importing files...');
+    try {
+      const result = await window.managerApi.importDroppedChart({
+        sourcePaths: importAnalysis.sourcePaths,
+        destinationDirectory: candidate.destinationDirectory
+      });
+      showToast(result.message);
+      if (result.ok) {
+        setImportAnalysis(null);
+        await load();
+      }
+    } catch (error) {
+      showToast(error instanceof Error ? error.message : String(error));
+    } finally {
+      setIsImportBusy(false);
+      setImportBusyMessage('');
+    }
+  }
+
   if (loading || !state) {
     return <div className="boot">読み込み中...</div>;
   }
 
   return (
-    <div className="app" onClick={() => { setContextMenu(null); setFilterMenu(null); }}>
+    <div className={`app ${isDragOver ? 'drag-over' : ''}`} onClick={() => { setContextMenu(null); setFilterMenu(null); }} onDragEnter={handleDragOver} onDragOver={handleDragOver} onDragLeave={handleDragLeave} onDrop={(event) => void handleDrop(event)}>
       <header className="topbar">
         <div className="brand">beatoraja Manager</div>
         <button className="icon-text" onClick={chooseRoot} title="beatoraja directory">
@@ -351,6 +427,35 @@ export function App(): JSX.Element {
         />
       )}
 
+      {isDragOver && (
+        <div className="drop-overlay">
+          <div>
+            <Upload size={28} />
+            <span>Drop chart file</span>
+          </div>
+        </div>
+      )}
+
+      {importAnalysis && (
+        <ChartImportDialog
+          analysis={importAnalysis}
+          selectedCandidateId={selectedImportCandidateId}
+          busy={isImportBusy}
+          onSelect={setSelectedImportCandidateId}
+          onCancel={() => setImportAnalysis(null)}
+          onConfirm={() => void confirmImportCandidate()}
+        />
+      )}
+
+      {isImportBusy && importBusyMessage && (
+        <div className="busy-overlay" role="status" aria-live="polite">
+          <div>
+            <RefreshCw size={24} />
+            <span>{importBusyMessage}</span>
+          </div>
+        </div>
+      )}
+
       {contextMenu && (
         <div className={`context-menu submenu-${contextMenu.submenuSide}`} style={{ left: contextMenu.x, top: contextMenu.y }} onClick={(event) => event.stopPropagation()}>
           <button disabled={!contextMenu.row.url1} onClick={() => openExternalFromMenu(contextMenu.row.url1)}><ExternalLink size={14} />Open URL1</button>
@@ -381,6 +486,81 @@ export function App(): JSX.Element {
       toastTimeoutRef.current = null;
     }, 3500);
   }
+}
+
+function ChartImportDialog({ analysis, selectedCandidateId, busy, onSelect, onCancel, onConfirm }: { analysis: ChartImportAnalysis; selectedCandidateId: string; busy: boolean; onSelect(id: string): void; onCancel(): void; onConfirm(): void }): JSX.Element {
+  const selectedCandidate = analysis.candidates.find((candidate) => candidate.id === selectedCandidateId);
+  return (
+    <div className="import-dialog-backdrop" onClick={onCancel}>
+      <section className="import-dialog" onClick={(event) => event.stopPropagation()}>
+        <div className="import-dialog-header">
+          <div>
+            <strong>Chart Import</strong>
+            <span>{analysis.dropped?.fileName ?? 'No chart file'}</span>
+          </div>
+          <button className="icon-button" onClick={onCancel} title="Close"><X size={16} /></button>
+        </div>
+
+        {analysis.dropped && (
+          <div className="import-source-grid">
+            <span>Title</span><strong title={`${analysis.dropped.title} ${analysis.dropped.subtitle}`}>{analysis.dropped.title || '(empty)'} {analysis.dropped.subtitle}</strong>
+            <span>Artist</span><strong title={analysis.dropped.artist}>{analysis.dropped.artist || '(empty)'}</strong>
+            <span>Source</span><strong title={analysis.dropped.sourcePath}>{analysis.dropped.sourcePath}</strong>
+          </div>
+        )}
+
+        {analysis.message && <div className="import-message">{analysis.message}</div>}
+
+        {analysis.companionPaths.length > 0 && (
+          <div className="import-companions">
+            <span>Related items to import</span>
+            <div>
+              {analysis.companionPaths.map((filePath) => <strong key={filePath} title={filePath}>{filePath}</strong>)}
+            </div>
+          </div>
+        )}
+
+        <div className="import-candidate-list">
+          {analysis.candidates.map((candidate) => (
+            <ImportCandidateRow
+              key={candidate.id}
+              candidate={candidate}
+              selected={candidate.id === selectedCandidateId}
+              onSelect={() => onSelect(candidate.id)}
+            />
+          ))}
+          {analysis.candidates.length === 0 && (
+            <div className="import-empty">No candidate folders found.</div>
+          )}
+        </div>
+
+        <div className="import-dialog-actions">
+          <button onClick={onCancel}>Cancel</button>
+          <button className="primary-action" disabled={!selectedCandidate || busy} onClick={onConfirm}>
+            {busy ? 'Importing...' : 'Import'}
+          </button>
+        </div>
+      </section>
+    </div>
+  );
+}
+
+function ImportCandidateRow({ candidate, selected, onSelect }: { candidate: ImportCandidate; selected: boolean; onSelect(): void }): JSX.Element {
+  return (
+    <button className={`import-candidate ${selected ? 'selected' : ''}`} onClick={onSelect}>
+      <div className="import-candidate-score">{Math.round(candidate.confidence * 100)}%</div>
+      <div className="import-candidate-main">
+        <div className="import-candidate-path" title={candidate.destinationDirectory}>{candidate.destinationDirectory}</div>
+        <div className="import-candidate-reason">
+          <span>{candidate.matchReason}</span>
+          <span title={`${candidate.matchedTitle} / ${candidate.matchedArtist}`}>{candidate.matchedTitle}</span>
+        </div>
+        <div className="import-candidate-titles">
+          {candidate.existingTitles.map((title) => <span key={title} title={title}>{title}</span>)}
+        </div>
+      </div>
+    </button>
+  );
 }
 
 function currentViewport(): { width: number; height: number } {

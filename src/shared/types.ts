@@ -121,3 +121,50 @@ export interface ExportResult {
   headerPath?: string;
   dataPath?: string;
 }
+
+export interface DroppedChartMetadata {
+  sourcePath: string;
+  fileName: string;
+  title: string;
+  subtitle: string;
+  artist: string;
+  genre: string;
+  md5: string;
+  sha256: string;
+  mode: number | null;
+}
+
+export interface ImportCandidate {
+  id: string;
+  destinationDirectory: string;
+  score: number;
+  confidence: number;
+  matchReason: string;
+  matchedTitle: string;
+  matchedArtist: string;
+  existingTitles: string[];
+  rowIds: string[];
+}
+
+export interface ChartImportAnalysis {
+  ok: boolean;
+  message: string;
+  dropped: DroppedChartMetadata | null;
+  candidates: ImportCandidate[];
+  sourcePaths: string[];
+  companionPaths: string[];
+}
+
+export interface ChartImportPayload {
+  sourcePaths: string[];
+  destinationDirectory: string;
+}
+
+export interface ChartImportResult {
+  ok: boolean;
+  message: string;
+  targetPath?: string;
+  importedPaths?: string[];
+  skippedPaths?: string[];
+  alreadyInPlace?: boolean;
+}

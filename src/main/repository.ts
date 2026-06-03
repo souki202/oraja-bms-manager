@@ -1,15 +1,22 @@
 import fs from 'node:fs/promises';
 import path from 'node:path';
+import crypto from 'node:crypto';
+import type { Stats } from 'node:fs';
 import type {
   AppSettings,
   BeatorajaConfigSummary,
+  ChartImportAnalysis,
+  ChartImportPayload,
+  ChartImportResult,
   DirectoryNode,
+  DroppedChartMetadata,
   ManagerState,
   PlayerProfile,
   TableChartRow,
   TableSummary
 } from '../shared/types';
 import { clearToStatus } from '../shared/domain';
+import { createImportMatcher, type ImportMatcher } from '../shared/importMatcher';
 import { loadTables, readSongList, type ParsedTableSong } from './tableParser';
 import { openReadonlyDatabase, selectAll } from './sqlite';
 
@@ -58,8 +65,12 @@ const defaultSettings: AppSettings = {
   selectedTableId: null
 };
 
+const chartFileExtensions = new Set(['.bms', '.bme', '.bml', '.pms', '.bmson']);
+
 export class ManagerRepository {
   private readonly settingsPath: string;
+  private stateCache: ManagerState | null = null;
+  private importMatcherCache: { libraryRows: TableChartRow[]; matcher: ImportMatcher } | null = null;
 
   constructor(private readonly appRoot: string, dataRoot = path.join(appRoot, 'data')) {
     this.settingsPath = path.join(dataRoot, 'settings.json');
@@ -83,7 +94,7 @@ export class ManagerRepository {
 
     if (!settings.beatorajaRoot) {
       diagnostics.push('beatoraja root is not set.');
-      return { settings, beatoraja, players, selectedPlayer, tables, rows, libraryRows, bmsRootNodes, diagnostics };
+      return this.cacheState({ settings, beatoraja, players, selectedPlayer, tables, rows, libraryRows, bmsRootNodes, diagnostics });
     }
 
     try {
@@ -115,7 +126,7 @@ export class ManagerRepository {
       diagnostics.push(error instanceof Error ? error.message : String(error));
     }
 
-    return { settings, beatoraja, players, selectedPlayer, tables, rows, libraryRows, bmsRootNodes, diagnostics };
+    return this.cacheState({ settings, beatoraja, players, selectedPlayer, tables, rows, libraryRows, bmsRootNodes, diagnostics });
   }
 
   async loadSettings(): Promise<AppSettings> {
@@ -132,6 +143,8 @@ export class ManagerRepository {
     const next = { ...current, ...patch };
     await fs.mkdir(path.dirname(this.settingsPath), { recursive: true });
     await fs.writeFile(this.settingsPath, JSON.stringify(next, null, 2), 'utf8');
+    this.stateCache = null;
+    this.importMatcherCache = null;
     return next;
   }
 
@@ -165,6 +178,126 @@ export class ManagerRepository {
       if (candidate && await exists(candidate)) return candidate;
     }
     return null;
+  }
+
+  async analyzeDroppedChart(paths: string[]): Promise<ChartImportAnalysis> {
+    const existingPaths = uniqueStrings(paths.filter(Boolean));
+    const supportedPath = existingPaths.find((filePath) => chartFileExtensions.has(path.extname(filePath).toLowerCase()));
+    const companionPaths = existingPaths.filter((filePath) => filePath !== supportedPath);
+
+    if (!supportedPath) {
+      return {
+        ok: false,
+        message: 'Drop a .bms, .bme, .bml, .pms, or .bmson chart file.',
+        dropped: null,
+        candidates: [],
+        sourcePaths: existingPaths,
+        companionPaths: existingPaths
+      };
+    }
+
+    try {
+      const stat = await fs.stat(supportedPath);
+      if (!stat.isFile()) throw new Error('The dropped item is not a file.');
+    } catch (error) {
+      return {
+        ok: false,
+        message: error instanceof Error ? error.message : String(error),
+        dropped: null,
+        candidates: [],
+        sourcePaths: existingPaths,
+        companionPaths
+      };
+    }
+
+    const buffer = await fs.readFile(supportedPath);
+    const state = this.stateCache ?? await this.loadState();
+    const importMatcher = this.getImportMatcher(state.libraryRows);
+    const analyses = parseDroppedChartVariants(supportedPath, buffer)
+      .map((dropped) => ({ dropped, candidates: importMatcher.rank(dropped) }))
+      .sort((a, b) => (b.candidates[0]?.score ?? 0) - (a.candidates[0]?.score ?? 0));
+    const best = analyses[0];
+
+    if (!best || best.candidates.length === 0) {
+      return {
+        ok: true,
+        message: 'No likely destination was found. Try dropping a chart whose parent song is already installed.',
+        dropped: best?.dropped ?? parseDroppedChart(supportedPath, buffer, decodeBuffer(buffer, 'utf-8')),
+        candidates: [],
+        sourcePaths: existingPaths,
+        companionPaths
+      };
+    }
+
+    return {
+      ok: true,
+      message: companionPaths.length > 0 ? `Using ${path.basename(supportedPath)} for matching; ${companionPaths.length} related item(s) will be imported together.` : '',
+      dropped: best.dropped,
+      candidates: best.candidates,
+      sourcePaths: existingPaths,
+      companionPaths
+    };
+  }
+
+  async importDroppedChart(payload: ChartImportPayload): Promise<ChartImportResult> {
+    const sourcePaths = uniqueStrings(payload.sourcePaths.filter(Boolean));
+    const destinationDirectory = payload.destinationDirectory;
+    const primaryChartPath = sourcePaths.find((sourcePath) => chartFileExtensions.has(path.extname(sourcePath).toLowerCase()));
+    if (!primaryChartPath) {
+      return { ok: false, message: 'Unsupported chart file extension.' };
+    }
+
+    let sourceStats: { sourcePath: string; stats: Stats }[];
+    try {
+      const destinationStat = await fs.stat(destinationDirectory);
+      if (!destinationStat.isDirectory()) return { ok: false, message: 'The selected destination is not a directory.' };
+      sourceStats = await Promise.all(sourcePaths.map(async (sourcePath) => ({ sourcePath, stats: await fs.stat(sourcePath) })));
+      const primary = sourceStats.find((source) => source.sourcePath === primaryChartPath);
+      if (!primary?.stats.isFile()) return { ok: false, message: 'The source chart is not a file.' };
+    } catch (error) {
+      return { ok: false, message: error instanceof Error ? error.message : String(error) };
+    }
+
+    const importedPaths: string[] = [];
+    const skippedPaths: string[] = [];
+    let primaryTargetPath = '';
+    try {
+      for (const source of sourceStats) {
+        const targetPath = path.join(destinationDirectory, path.basename(source.sourcePath));
+        if (samePath(source.sourcePath, targetPath) || await exists(targetPath)) {
+          skippedPaths.push(source.sourcePath);
+          if (source.sourcePath === primaryChartPath) primaryTargetPath = targetPath;
+          continue;
+        }
+
+        if (source.stats.isDirectory()) {
+          if (isPathInside(targetPath, source.sourcePath)) {
+            return { ok: false, message: `Refusing to copy a folder into itself: ${source.sourcePath}` };
+          }
+          await fs.cp(source.sourcePath, targetPath, { recursive: true, force: false, errorOnExist: true });
+        } else if (source.stats.isFile()) {
+          await fs.copyFile(source.sourcePath, targetPath);
+        } else {
+          skippedPaths.push(source.sourcePath);
+          continue;
+        }
+        importedPaths.push(targetPath);
+        if (source.sourcePath === primaryChartPath) primaryTargetPath = targetPath;
+      }
+
+      const importedText = importedPaths.length === 1 ? '1 item' : `${importedPaths.length} items`;
+      const skippedText = skippedPaths.length > 0 ? `; ${skippedPaths.length} already existed or were skipped` : '';
+      return {
+        ok: true,
+        message: importedPaths.length === 0 ? `${skippedPaths.length} item(s) already existed. Import treated as complete.` : `Imported ${importedText}${skippedText}.`,
+        targetPath: primaryTargetPath || importedPaths[0],
+        importedPaths,
+        skippedPaths,
+        alreadyInPlace: importedPaths.length === 0 && skippedPaths.length > 0
+      };
+    } catch (error) {
+      return { ok: false, message: error instanceof Error ? error.message : String(error) };
+    }
   }
 
   private async loadBeatorajaConfig(root: string): Promise<BeatorajaConfigSummary> {
@@ -256,6 +389,19 @@ export class ManagerRepository {
       diagnostics.push(`Failed to read score.db: ${error instanceof Error ? error.message : String(error)}`);
       return [];
     }
+  }
+
+  private cacheState(state: ManagerState): ManagerState {
+    this.stateCache = state;
+    this.importMatcherCache = null;
+    return state;
+  }
+
+  private getImportMatcher(libraryRows: TableChartRow[]): ImportMatcher {
+    if (!this.importMatcherCache || this.importMatcherCache.libraryRows !== libraryRows) {
+      this.importMatcherCache = { libraryRows, matcher: createImportMatcher(libraryRows) };
+    }
+    return this.importMatcherCache.matcher;
   }
 }
 
@@ -482,4 +628,94 @@ function isPathUnderRoot(filePath: string, root: string): boolean {
   const normalizedPath = normalizePath(filePath);
   const normalizedRoot = normalizePath(root).replace(/\/+$/, '');
   return normalizedPath === normalizedRoot || normalizedPath.startsWith(`${normalizedRoot}/`);
+}
+
+function parseDroppedChartVariants(sourcePath: string, buffer: Buffer): DroppedChartMetadata[] {
+  const variants = [
+    parseDroppedChart(sourcePath, buffer, decodeBuffer(buffer, 'utf-8')),
+    parseDroppedChart(sourcePath, buffer, decodeBuffer(buffer, 'shift_jis'))
+  ];
+  const seen = new Set<string>();
+  return variants.filter((metadata) => {
+    const key = `${metadata.title}\n${metadata.subtitle}\n${metadata.artist}\n${metadata.genre}`;
+    if (seen.has(key)) return false;
+    seen.add(key);
+    return true;
+  });
+}
+
+function parseDroppedChart(sourcePath: string, buffer: Buffer, text: string): DroppedChartMetadata {
+  const extension = path.extname(sourcePath).toLowerCase();
+  const base = {
+    sourcePath,
+    fileName: path.basename(sourcePath),
+    title: '',
+    subtitle: '',
+    artist: '',
+    genre: '',
+    md5: crypto.createHash('md5').update(buffer).digest('hex'),
+    sha256: crypto.createHash('sha256').update(buffer).digest('hex'),
+    mode: extension === '.pms' ? 9 : null
+  } satisfies DroppedChartMetadata;
+
+  if (extension === '.bmson') return parseBmsonMetadata(text, base);
+  return parseBmsMetadata(text, base);
+}
+
+function parseBmsMetadata(text: string, base: DroppedChartMetadata): DroppedChartMetadata {
+  const metadata = { ...base };
+  for (const rawLine of text.split(/\r?\n/).slice(0, 4000)) {
+    const line = rawLine.trim();
+    if (!line.startsWith('#')) continue;
+    const match = line.match(/^#([A-Z0-9_]+)\s+(.+)$/i);
+    if (!match) continue;
+
+    const key = match[1].toUpperCase();
+    const value = match[2].trim();
+    if (key === 'TITLE') metadata.title = value;
+    else if (key === 'SUBTITLE') metadata.subtitle = value;
+    else if (key === 'ARTIST') metadata.artist = value;
+    else if (key === 'GENRE') metadata.genre = value;
+    else if (key === 'PLAYER') metadata.mode = playerMode(value, base.mode);
+  }
+  return metadata.title ? metadata : { ...metadata, title: path.basename(base.fileName, path.extname(base.fileName)) };
+}
+
+function parseBmsonMetadata(text: string, base: DroppedChartMetadata): DroppedChartMetadata {
+  try {
+    const data = JSON.parse(text) as Record<string, unknown>;
+    const info = data.info && typeof data.info === 'object' ? data.info as Record<string, unknown> : {};
+    const modeHint = String(info.mode_hint ?? '');
+    return {
+      ...base,
+      title: String(info.title ?? path.basename(base.fileName, path.extname(base.fileName))),
+      subtitle: String(info.subtitle ?? ''),
+      artist: String(info.artist ?? ''),
+      genre: String(info.genre ?? ''),
+      mode: modeHint.includes('9') ? 9 : modeHint.includes('14') ? 14 : modeHint.includes('7') ? 7 : base.mode
+    };
+  } catch {
+    return { ...base, title: path.basename(base.fileName, path.extname(base.fileName)) };
+  }
+}
+
+function decodeBuffer(buffer: Buffer, encoding: 'utf-8' | 'shift_jis'): string {
+  return new TextDecoder(encoding, { fatal: false }).decode(buffer);
+}
+
+function playerMode(value: string, fallback: number | null): number | null {
+  const player = Number(value);
+  if (player === 1) return 7;
+  if (player === 2) return 14;
+  if (player === 3) return 9;
+  return fallback;
+}
+
+function samePath(a: string, b: string): boolean {
+  return path.resolve(a).toLowerCase() === path.resolve(b).toLowerCase();
+}
+
+function isPathInside(candidate: string, parent: string): boolean {
+  const relative = path.relative(path.resolve(parent), path.resolve(candidate));
+  return Boolean(relative) && !relative.startsWith('..') && !path.isAbsolute(relative);
 }
