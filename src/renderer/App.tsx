@@ -525,7 +525,14 @@ function ChartImportDialog({ analysis, selectedCandidateId, busy, onSelect, onCa
               key={candidate.id}
               candidate={candidate}
               selected={candidate.id === selectedCandidateId}
-              onSelect={() => onSelect(candidate.id)}
+              disabled={busy}
+              onSelect={() => {
+                if (candidate.id === selectedCandidateId) {
+                  onConfirm();
+                } else {
+                  onSelect(candidate.id);
+                }
+              }}
             />
           ))}
           {analysis.candidates.length === 0 && (
@@ -544,9 +551,9 @@ function ChartImportDialog({ analysis, selectedCandidateId, busy, onSelect, onCa
   );
 }
 
-function ImportCandidateRow({ candidate, selected, onSelect }: { candidate: ImportCandidate; selected: boolean; onSelect(): void }): JSX.Element {
+function ImportCandidateRow({ candidate, selected, disabled, onSelect }: { candidate: ImportCandidate; selected: boolean; disabled: boolean; onSelect(): void }): JSX.Element {
   return (
-    <button className={`import-candidate ${selected ? 'selected' : ''}`} onClick={onSelect}>
+    <button className={`import-candidate ${selected ? 'selected' : ''}`} disabled={disabled} onClick={onSelect}>
       <div className="import-candidate-score">{Math.round(candidate.confidence * 100)}%</div>
       <div className="import-candidate-main">
         <div className="import-candidate-path" title={candidate.destinationDirectory}>{candidate.destinationDirectory}</div>
@@ -574,6 +581,7 @@ function ChartTable({ rows, compact = false, sort, columnFilters, onSort, onFilt
   const rowVirtualizer = useVirtualizer({
     count: rows.length,
     getScrollElement: () => parentRef.current,
+    getItemKey: (index) => `${rows[index]?.id ?? 'row'}:${index}`,
     estimateSize: () => 23,
     overscan: 20
   });
@@ -630,7 +638,7 @@ function ChartTable({ rows, compact = false, sort, columnFilters, onSort, onFilt
           {virtualRows.map((virtualRow) => {
             const row = rows[virtualRow.index];
             return (
-              <tr key={row.id} className={row.status === 'NO SONG' ? 'no-song-row' : ''} onContextMenu={(event) => onContextMenu(event, row)}>
+              <tr key={virtualRow.key} className={row.status === 'NO SONG' ? 'no-song-row' : ''} onContextMenu={(event) => onContextMenu(event, row)}>
                 <td className="folder-cell" title={row.level}>{row.level}</td>
                 <td>{row.songLevel ?? row.difficulty ?? ''}</td>
                 <td className="title-cell" title={`${row.title} ${row.subtitle}`}>{row.title}<span>{row.subtitle}</span></td>

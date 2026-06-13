@@ -466,7 +466,7 @@ function createLibraryRows(songs: SongDbRow[], infos: SongInfoRow[], scores: Sco
       const clear = numberOrNull(score?.clear);
       const folderMd5s = md5sByFolder.get(folderKey(String(song.path ?? ''))) ?? [];
       return {
-        id: `library:${sha || md5 || index}`,
+        id: `library:${sha || md5 || 'chart'}:${index}`,
         tableId: '__library',
         tableName: 'BMS Path',
         tableUrl: '',
