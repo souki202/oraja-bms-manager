@@ -1,6 +1,6 @@
 import type { TableChartRow } from './types';
 
-export type IrTarget = 'bokutachi' | 'mocha' | 'minir';
+export type IrTarget = 'bokutachi' | 'mocha' | 'minir' | 'bms-ir';
 export type BokutachiGame = 'bms-7k' | 'bms-14k' | 'pms-controller';
 
 export function bokutachiGameForMode(mode: number | null): BokutachiGame | null {
@@ -15,12 +15,13 @@ export function canOpenBokutachi(row: TableChartRow): boolean {
 }
 
 export function hasAnyIrTarget(row: TableChartRow): boolean {
-  return Boolean(row.sha256 || canOpenBokutachi(row));
+  return Boolean(row.sha256 || row.md5 || canOpenBokutachi(row));
 }
 
 export function buildStaticIrUrl(row: TableChartRow, target: Exclude<IrTarget, 'bokutachi'>): string {
-  const hash = row.sha256.trim().toLowerCase();
+  const hash = (target === 'bms-ir' ? row.md5 : row.sha256).trim().toLowerCase();
   if (!hash) return '';
+  if (target === 'bms-ir') return `https://www.bms-ir.org/new/song?songmd5=${encodeURIComponent(hash)}&client_view=all_clients`;
   if (target === 'mocha') return `https://mocha-repository.info/song.php?sha256=${hash}`;
   return `https://www.gaftalk.com/minir/#/viewer/song/${hash}/0`;
 }

@@ -22,13 +22,16 @@ describe('IR helpers', () => {
   it('keeps the IR submenu available when any target can open', () => {
     expect(hasAnyIrTarget(row({ mode: 5, sha256: 'a'.repeat(64) }))).toBe(true);
     expect(hasAnyIrTarget(row({ mode: 7, md5: 'b'.repeat(32) }))).toBe(true);
-    expect(hasAnyIrTarget(row({ mode: 5, md5: 'b'.repeat(32) }))).toBe(false);
+    expect(hasAnyIrTarget(row({ mode: 5, md5: 'b'.repeat(32) }))).toBe(true);
+    expect(hasAnyIrTarget(row({ mode: 5 }))).toBe(false);
   });
 
-  it('builds static sha256 IR URLs', () => {
-    const chart = row({ sha256: 'ABCDEF' });
+  it('builds static IR URLs from the hash required by each service', () => {
+    const chart = row({ sha256: 'ABCDEF', md5: '751738DEA1169C5C39DB935ADFC9E85F' });
     expect(buildStaticIrUrl(chart, 'mocha')).toBe('https://mocha-repository.info/song.php?sha256=abcdef');
     expect(buildStaticIrUrl(chart, 'minir')).toBe('https://www.gaftalk.com/minir/#/viewer/song/abcdef/0');
+    expect(buildStaticIrUrl(chart, 'bms-ir')).toBe('https://www.bms-ir.org/new/song?songmd5=751738dea1169c5c39db935adfc9e85f&client_view=all_clients');
+    expect(buildStaticIrUrl(row({ sha256: 'ABCDEF' }), 'bms-ir')).toBe('');
   });
 
   it('extracts bokutachi chart ids from current and legacy-shaped API responses', () => {

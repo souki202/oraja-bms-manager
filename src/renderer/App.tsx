@@ -8,6 +8,7 @@ import { clearStatuses, countActiveColumnFilters, isColumnFilterActive, matchesC
 import { buildSimilarSearchRows, findSimilarRows, statusClass } from '../shared/domain';
 import { buildBmsPathExport, buildTableExport } from '../shared/exportTable';
 import { bokutachiGameForMode, buildStaticIrUrl, canOpenBokutachi, hasAnyIrTarget } from '../shared/ir';
+import type { IrTarget } from '../shared/ir';
 import { buildRowsAsync } from './asyncRows';
 import { positionContextMenu, positionFilterMenu } from './menuPosition';
 import type { MenuSide } from './menuPosition';
@@ -23,7 +24,6 @@ type ContextMenuState = {
 type SortKey = 'level' | 'songLevel' | 'title' | 'artist' | 'url1' | 'url2' | 'status' | 'notes' | 'tableName' | 'path';
 type SortDirection = 'asc' | 'desc';
 type SortState = { key: SortKey; direction: SortDirection };
-type IrTarget = 'bokutachi' | 'mocha' | 'minir';
 type TableColumn = { key: SortKey; label: string; width: number; minWidth: number };
 type FilterMenuState = { key: SortKey; x: number; y: number } | null;
 
@@ -466,6 +466,7 @@ export function App(): JSX.Element {
               <button disabled={!canOpenBokutachi(contextMenu.row)} onClick={() => void openIrFromMenu(contextMenu.row, 'bokutachi')}>bokutachi</button>
               <button disabled={!contextMenu.row.sha256} onClick={() => void openIrFromMenu(contextMenu.row, 'mocha')}>mocha-repository</button>
               <button disabled={!contextMenu.row.sha256} onClick={() => void openIrFromMenu(contextMenu.row, 'minir')}>MinIR</button>
+              <button disabled={!contextMenu.row.md5} onClick={() => void openIrFromMenu(contextMenu.row, 'bms-ir')}>BMS-IR</button>
             </div>
           </div>
           <button onClick={() => { void navigator.clipboard.writeText(contextMenu.row.sha256 || contextMenu.row.md5); setContextMenu(null); }}><Copy size={14} />Copy Hash</button>
