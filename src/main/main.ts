@@ -3,7 +3,7 @@ import fs from 'node:fs/promises';
 import path from 'node:path';
 import { ManagerRepository } from './repository';
 import { extractBokutachiChartId } from '../shared/ir';
-import type { AppSettings, BokutachiResolvePayload, ChartImportPayload, ExportPayload, ExportResult, OpenPathPayload } from '../shared/types';
+import type { AppSettings, BokutachiResolvePayload, ChartImportPayload, DuplicateDirectoryMergePayload, ExportPayload, ExportResult, OpenPathPayload } from '../shared/types';
 
 const appRoot = app.getAppPath();
 const dataRoot = app.isPackaged ? app.getPath('userData') : path.join(appRoot, 'data');
@@ -71,6 +71,8 @@ ipcMain.handle('table:export', async (_event, payload: ExportPayload): Promise<E
 ipcMain.handle('chart-import:analyze', (_event, paths: string[]) => repository.analyzeDroppedChart(paths));
 
 ipcMain.handle('chart-import:execute', (_event, payload: ChartImportPayload) => repository.importDroppedChart(payload));
+
+ipcMain.handle('duplicates:merge-directories', (_event, payload: DuplicateDirectoryMergePayload) => repository.mergeDuplicateDirectories(payload));
 
 ipcMain.handle('ir:resolve-bokutachi', async (_event, payload: BokutachiResolvePayload): Promise<string | null> => {
   const game = validateBokutachiGame(payload.game);

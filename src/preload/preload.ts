@@ -1,5 +1,5 @@
 import { contextBridge, ipcRenderer, webUtils } from 'electron';
-import type { AppSettings, BokutachiResolvePayload, ChartImportAnalysis, ChartImportPayload, ChartImportResult, DirectoryNode, ExportPayload, ExportResult, ManagerState, OpenPathPayload } from '../shared/types';
+import type { AppSettings, BokutachiResolvePayload, ChartImportAnalysis, ChartImportPayload, ChartImportResult, DirectoryNode, DuplicateDirectoryMergePayload, DuplicateDirectoryMergeResult, ExportPayload, ExportResult, ManagerState, OpenPathPayload } from '../shared/types';
 
 contextBridge.exposeInMainWorld('managerApi', {
   loadState: (): Promise<ManagerState> => ipcRenderer.invoke('state:load'),
@@ -10,6 +10,7 @@ contextBridge.exposeInMainWorld('managerApi', {
   getPathForFile: (file: File): string => webUtils.getPathForFile(file),
   analyzeDroppedChart: (paths: string[]): Promise<ChartImportAnalysis> => ipcRenderer.invoke('chart-import:analyze', paths),
   importDroppedChart: (payload: ChartImportPayload): Promise<ChartImportResult> => ipcRenderer.invoke('chart-import:execute', payload),
+  mergeDuplicateDirectories: (payload: DuplicateDirectoryMergePayload): Promise<DuplicateDirectoryMergeResult> => ipcRenderer.invoke('duplicates:merge-directories', payload),
   resolveBokutachiChartUrl: (payload: BokutachiResolvePayload): Promise<string | null> => ipcRenderer.invoke('ir:resolve-bokutachi', payload),
   openExternal: (url: string): Promise<boolean> => ipcRenderer.invoke('shell:open-external', url),
   openPath: (payload: OpenPathPayload): Promise<boolean> => ipcRenderer.invoke('shell:open-path', payload)

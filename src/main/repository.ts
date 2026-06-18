@@ -8,6 +8,8 @@ import type {
   ChartImportAnalysis,
   ChartImportPayload,
   ChartImportResult,
+  DuplicateDirectoryMergePayload,
+  DuplicateDirectoryMergeResult,
   DirectoryNode,
   DroppedChartMetadata,
   ManagerState,
@@ -294,6 +296,90 @@ export class ManagerRepository {
         importedPaths,
         skippedPaths,
         alreadyInPlace: importedPaths.length === 0 && skippedPaths.length > 0
+      };
+    } catch (error) {
+      return { ok: false, message: error instanceof Error ? error.message : String(error) };
+    }
+  }
+
+  async mergeDuplicateDirectories(payload: DuplicateDirectoryMergePayload): Promise<DuplicateDirectoryMergeResult> {
+    if (!payload.targetDirectory.trim()) {
+      return { ok: false, message: 'Merge target is empty.' };
+    }
+    const sourceDirectories = uniqueStrings(payload.sourceDirectories.filter((directory) => directory.trim()).map((directory) => path.resolve(directory)));
+    const targetDirectory = path.resolve(payload.targetDirectory);
+    if (sourceDirectories.length < 2) {
+      return { ok: false, message: 'Select at least two directories to merge.' };
+    }
+    if (!sourceDirectories.some((directory) => samePath(directory, targetDirectory))) {
+      return { ok: false, message: 'The merge target must be included in the selected directories.' };
+    }
+
+    try {
+      const settings = await this.loadSettings();
+      const config = await this.loadBeatorajaConfig(settings.beatorajaRoot || path.dirname(this.appRoot));
+      const bmsRoots = config.bmsRoots.map((root) => path.resolve(resolveFromRoot(config.root, root)));
+      if (bmsRoots.length === 0) {
+        return { ok: false, message: 'No BMS root is configured.' };
+      }
+
+      const targetStat = await fs.stat(targetDirectory);
+      if (!targetStat.isDirectory()) return { ok: false, message: `Merge target is not a directory: ${targetDirectory}` };
+
+      for (const directory of sourceDirectories) {
+        const stat = await fs.stat(directory);
+        if (!stat.isDirectory()) return { ok: false, message: `Merge source is not a directory: ${directory}` };
+        if (!isPathUnderAnyRoot(directory, bmsRoots)) {
+          return { ok: false, message: `Refusing to merge a directory outside BMS roots: ${directory}` };
+        }
+        if (bmsRoots.some((root) => samePath(directory, root))) {
+          return { ok: false, message: `Refusing to merge a BMS root directory directly: ${directory}` };
+        }
+      }
+
+      const nonTargetSources = sourceDirectories.filter((directory) => !samePath(directory, targetDirectory));
+      for (const source of nonTargetSources) {
+        if (isPathInside(source, targetDirectory) || isPathInside(targetDirectory, source)) {
+          return { ok: false, message: `Nested merge directories are not supported: ${source}` };
+        }
+      }
+
+      for (let index = 0; index < sourceDirectories.length; index += 1) {
+        for (let otherIndex = index + 1; otherIndex < sourceDirectories.length; otherIndex += 1) {
+          const a = sourceDirectories[index];
+          const b = sourceDirectories[otherIndex];
+          if (samePath(a, b)) continue;
+          if (isPathInside(a, b) || isPathInside(b, a)) {
+            return { ok: false, message: `Nested merge directories are not supported: ${a} / ${b}` };
+          }
+        }
+      }
+
+      const movedFiles: string[] = [];
+      const skippedFiles: string[] = [];
+      const deletedDirectories: string[] = [];
+
+      for (const source of nonTargetSources) {
+        const result = await moveDirectoryContentsSkippingExisting(source, targetDirectory);
+        movedFiles.push(...result.movedFiles);
+        skippedFiles.push(...result.skippedFiles);
+      }
+
+      for (const source of nonTargetSources) {
+        await fs.rm(source, { recursive: true, force: false });
+        deletedDirectories.push(source);
+      }
+
+      this.stateCache = null;
+      this.importMatcherCache = null;
+      return {
+        ok: true,
+        message: `Merged ${nonTargetSources.length} director${nonTargetSources.length === 1 ? 'y' : 'ies'} into ${targetDirectory}. Moved ${movedFiles.length} file(s), skipped ${skippedFiles.length} existing file(s).`,
+        targetDirectory,
+        mergedDirectories: nonTargetSources,
+        deletedDirectories,
+        movedFiles,
+        skippedFiles
       };
     } catch (error) {
       return { ok: false, message: error instanceof Error ? error.message : String(error) };
@@ -718,4 +804,88 @@ function samePath(a: string, b: string): boolean {
 function isPathInside(candidate: string, parent: string): boolean {
   const relative = path.relative(path.resolve(parent), path.resolve(candidate));
   return Boolean(relative) && !relative.startsWith('..') && !path.isAbsolute(relative);
+}
+
+function isPathUnderAnyRoot(candidate: string, roots: string[]): boolean {
+  return roots.some((root) => samePath(candidate, root) || isPathInside(candidate, root));
+}
+
+async function moveDirectoryContentsSkippingExisting(sourceDirectory: string, targetDirectory: string): Promise<{ movedFiles: string[]; skippedFiles: string[] }> {
+  const movedFiles: string[] = [];
+  const skippedFiles: string[] = [];
+  await moveChildren(sourceDirectory, sourceDirectory, targetDirectory, movedFiles, skippedFiles);
+  return { movedFiles, skippedFiles };
+}
+
+async function moveChildren(sourceRoot: string, currentSourceDirectory: string, targetRoot: string, movedFiles: string[], skippedFiles: string[]): Promise<void> {
+  const entries = await fs.readdir(currentSourceDirectory, { withFileTypes: true });
+  for (const entry of entries) {
+    const sourcePath = path.join(currentSourceDirectory, entry.name);
+    const relativePath = path.relative(sourceRoot, sourcePath);
+    const targetPath = path.join(targetRoot, relativePath);
+
+    if (entry.isDirectory()) {
+      if (await exists(targetPath)) {
+        const targetStat = await fs.stat(targetPath);
+        if (!targetStat.isDirectory()) {
+          skippedFiles.push(...await collectFilePaths(sourcePath));
+          continue;
+        }
+      } else {
+        await fs.mkdir(targetPath, { recursive: true });
+      }
+      await moveChildren(sourceRoot, sourcePath, targetRoot, movedFiles, skippedFiles);
+      continue;
+    }
+
+    if (await hasExistingMergeEquivalent(targetPath)) {
+      skippedFiles.push(sourcePath);
+      continue;
+    }
+
+    await fs.mkdir(path.dirname(targetPath), { recursive: true });
+    await moveFileAcrossVolumes(sourcePath, targetPath);
+    movedFiles.push(targetPath);
+  }
+}
+
+async function moveFileAcrossVolumes(sourcePath: string, targetPath: string): Promise<void> {
+  try {
+    await fs.rename(sourcePath, targetPath);
+  } catch (error) {
+    if (!isCrossDeviceError(error)) throw error;
+    await fs.copyFile(sourcePath, targetPath);
+    await fs.unlink(sourcePath);
+  }
+}
+
+async function collectFilePaths(directory: string): Promise<string[]> {
+  const files: string[] = [];
+  const entries = await fs.readdir(directory, { withFileTypes: true });
+  for (const entry of entries) {
+    const entryPath = path.join(directory, entry.name);
+    if (entry.isDirectory()) {
+      files.push(...await collectFilePaths(entryPath));
+    } else {
+      files.push(entryPath);
+    }
+  }
+  return files;
+}
+
+function isCrossDeviceError(error: unknown): boolean {
+  return typeof error === 'object' && error !== null && 'code' in error && (error as { code?: unknown }).code === 'EXDEV';
+}
+
+async function hasExistingMergeEquivalent(targetPath: string): Promise<boolean> {
+  if (await exists(targetPath)) return true;
+  const audioEquivalent = audioEquivalentPath(targetPath);
+  return audioEquivalent ? exists(audioEquivalent) : false;
+}
+
+function audioEquivalentPath(filePath: string): string | null {
+  const extension = path.extname(filePath).toLowerCase();
+  if (extension !== '.wav' && extension !== '.ogg') return null;
+  const alternateExtension = extension === '.wav' ? '.ogg' : '.wav';
+  return path.join(path.dirname(filePath), `${path.basename(filePath, path.extname(filePath))}${alternateExtension}`);
 }

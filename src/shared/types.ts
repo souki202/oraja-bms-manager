@@ -76,6 +76,16 @@ export interface TableChartRow {
   confidence?: number;
 }
 
+export interface DuplicateChartGroup {
+  id: string;
+  title: string;
+  artist: string;
+  copies: TableChartRow[];
+  sharedSha256: string[];
+  sharedMd5: string[];
+  newestAddDate: number | null;
+}
+
 export type ClearStatus =
   | 'NO SONG'
   | 'NO PLAY'
@@ -167,4 +177,19 @@ export interface ChartImportResult {
   importedPaths?: string[];
   skippedPaths?: string[];
   alreadyInPlace?: boolean;
+}
+
+export interface DuplicateDirectoryMergePayload {
+  targetDirectory: string;
+  sourceDirectories: string[];
+}
+
+export interface DuplicateDirectoryMergeResult {
+  ok: boolean;
+  message: string;
+  targetDirectory?: string;
+  mergedDirectories?: string[];
+  deletedDirectories?: string[];
+  movedFiles?: string[];
+  skippedFiles?: string[];
 }

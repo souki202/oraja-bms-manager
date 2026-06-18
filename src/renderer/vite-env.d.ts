@@ -1,6 +1,6 @@
 /// <reference types="vite/client" />
 
-import type { AppSettings, BokutachiResolvePayload, ChartImportAnalysis, ChartImportPayload, ChartImportResult, DirectoryNode, ExportPayload, ExportResult, ManagerState, OpenPathPayload } from '../shared/types';
+import type { AppSettings, BokutachiResolvePayload, ChartImportAnalysis, ChartImportPayload, ChartImportResult, DirectoryNode, DuplicateDirectoryMergePayload, DuplicateDirectoryMergeResult, ExportPayload, ExportResult, ManagerState, OpenPathPayload } from '../shared/types';
 
 declare global {
   interface Window {
@@ -13,6 +13,7 @@ declare global {
       getPathForFile(file: File): string;
       analyzeDroppedChart(paths: string[]): Promise<ChartImportAnalysis>;
       importDroppedChart(payload: ChartImportPayload): Promise<ChartImportResult>;
+      mergeDuplicateDirectories(payload: DuplicateDirectoryMergePayload): Promise<DuplicateDirectoryMergeResult>;
       resolveBokutachiChartUrl(payload: BokutachiResolvePayload): Promise<string | null>;
       openExternal(url: string): Promise<boolean>;
       openPath(payload: OpenPathPayload): Promise<boolean>;

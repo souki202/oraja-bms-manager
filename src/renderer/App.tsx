@@ -1,10 +1,11 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import type { JSX } from 'react';
 import { useVirtualizer } from '@tanstack/react-virtual';
-import { ArrowDown, ArrowUp, ArrowUpDown, ChevronRight, Copy, Download, ExternalLink, Filter, FolderOpen, GitBranch, RefreshCw, Search, Settings, Upload, X } from 'lucide-react';
-import type { ChartImportAnalysis, DirectoryNode, ImportCandidate, ManagerState, TableChartRow, TableSummary } from '../shared/types';
+import { ArrowDown, ArrowUp, ArrowUpDown, ChevronDown, ChevronRight, Copy, Download, ExternalLink, Filter, FolderOpen, GitBranch, RefreshCw, Search, Settings, Upload, X } from 'lucide-react';
+import type { ChartImportAnalysis, DirectoryNode, DuplicateChartGroup, ImportCandidate, ManagerState, TableChartRow, TableSummary } from '../shared/types';
 import type { ChartColumnFilter, ChartColumnFilters, ChartFilterCache, ChartFilterKey, UrlFilterMode } from '../shared/chartFilters';
 import { clearStatuses, countActiveColumnFilters, isColumnFilterActive, matchesChartFilters, normalizeSearchQuery, prepareColumnFilters } from '../shared/chartFilters';
+import { countRedundantChartCopies, findDuplicateChartGroups } from '../shared/duplicateCharts';
 import { buildSimilarSearchRows, findSimilarRows, statusClass } from '../shared/domain';
 import { buildBmsPathExport, buildTableExport } from '../shared/exportTable';
 import { bokutachiGameForMode, buildStaticIrUrl, canOpenBokutachi, hasAnyIrTarget } from '../shared/ir';
@@ -26,6 +27,7 @@ type SortDirection = 'asc' | 'desc';
 type SortState = { key: SortKey; direction: SortDirection };
 type TableColumn = { key: SortKey; label: string; width: number; minWidth: number };
 type FilterMenuState = { key: SortKey; x: number; y: number } | null;
+type ActiveView = 'charts' | 'duplicates';
 
 const defaultSort: SortState = { key: 'title', direction: 'asc' };
 const editorVersion = String(packageJson.version ?? '');
@@ -58,6 +60,7 @@ export function App(): JSX.Element {
   const [state, setState] = useState<ManagerState | null>(null);
   const [loading, setLoading] = useState(true);
   const [searchText, setSearchText] = useState('');
+  const [activeView, setActiveView] = useState<ActiveView>('charts');
   const [selectedTableId, setSelectedTableId] = useState<string | null>(null);
   const [selectedBmsRoot, setSelectedBmsRoot] = useState<DirectoryNode | null>(null);
   const [sort, setSort] = useState<SortState>(defaultSort);
@@ -74,11 +77,20 @@ export function App(): JSX.Element {
   const [selectedImportCandidateId, setSelectedImportCandidateId] = useState('');
   const [isImportBusy, setIsImportBusy] = useState(false);
   const [importBusyMessage, setImportBusyMessage] = useState('');
+  const [mergeBusyGroupId, setMergeBusyGroupId] = useState('');
+  const [mergeBusyMessage, setMergeBusyMessage] = useState('');
+  const [mergedDuplicateGroupIds, setMergedDuplicateGroupIds] = useState<Set<string>>(new Set());
   const toastTimeoutRef = useRef<number | null>(null);
 
   const rowFilterCache = useMemo<ChartFilterCache>(() => new WeakMap(), [state]);
   const preparedColumnFilters = useMemo(() => prepareColumnFilters(columnFilters), [columnFilters]);
   const activeFilterCount = useMemo(() => countActiveColumnFilters(columnFilters), [columnFilters]);
+  const duplicateGroups = useMemo(
+    () => findDuplicateChartGroups(state?.libraryRows ?? []).filter((group) => !mergedDuplicateGroupIds.has(group.id)),
+    [state, mergedDuplicateGroupIds]
+  );
+  const visibleDuplicateGroups = useMemo(() => filterDuplicateGroups(duplicateGroups, searchText), [duplicateGroups, searchText]);
+  const redundantCopyCount = useMemo(() => countRedundantChartCopies(duplicateGroups), [duplicateGroups]);
 
   useEffect(() => {
     void load();
@@ -100,6 +112,7 @@ export function App(): JSX.Element {
     const sortedTables = sortTables(next.tables);
     setState(next);
     setSearchText(next.settings.searchText ?? '');
+    setActiveView('charts');
     setSelectedTableId(next.settings.selectedTableId ?? sortedTables[0]?.id ?? null);
     setSelectedBmsRoot(null);
     setLoading(false);
@@ -114,6 +127,11 @@ export function App(): JSX.Element {
 
   useEffect(() => {
     if (!state) return undefined;
+    if (activeView === 'duplicates') {
+      setFilteredRows([]);
+      setIsListLoading(false);
+      return undefined;
+    }
 
     const controller = new AbortController();
     setIsListLoading(true);
@@ -140,7 +158,7 @@ export function App(): JSX.Element {
       controller.abort();
       setIsListLoading(true);
     };
-  }, [state, selectedTableId, selectedBmsRoot, searchText, preparedColumnFilters, rowFilterCache]);
+  }, [state, activeView, selectedTableId, selectedBmsRoot, searchText, preparedColumnFilters, rowFilterCache]);
 
   const visibleRows = useMemo(() => sortRows(filteredRows, sort), [filteredRows, sort]);
 
@@ -149,7 +167,7 @@ export function App(): JSX.Element {
     return sortRows(findSimilarRows(similarTarget, buildSimilarSearchRows(state.rows, state.libraryRows, similarTarget)), sort);
   }, [state, similarTarget, sort]);
 
-  const activeTable = !selectedBmsRoot ? state?.tables.find((table) => table.id === selectedTableId) ?? null : null;
+  const activeTable = activeView === 'charts' && !selectedBmsRoot ? state?.tables.find((table) => table.id === selectedTableId) ?? null : null;
 
   async function chooseRoot(): Promise<void> {
     const root = await window.managerApi.chooseRoot();
@@ -161,13 +179,23 @@ export function App(): JSX.Element {
   }
 
   async function selectTable(tableId: string | null): Promise<void> {
+    setActiveView('charts');
     setSelectedBmsRoot(null);
     setSelectedTableId(tableId);
   }
 
   function selectBmsRoot(node: DirectoryNode): void {
+    setActiveView('charts');
     setSelectedBmsRoot(node);
     setSelectedTableId(null);
+  }
+
+  function selectDuplicates(): void {
+    setActiveView('duplicates');
+    setSelectedBmsRoot(null);
+    setSelectedTableId(null);
+    setSimilarTarget(null);
+    setColumnFilters({});
   }
 
   async function updateSearch(value: string): Promise<void> {
@@ -315,6 +343,42 @@ export function App(): JSX.Element {
     }
   }
 
+  async function mergeDuplicateGroup(group: DuplicateChartGroup, targetDirectory: string, sourceDirectories: string[]): Promise<void> {
+    const directories = uniqueStrings(sourceDirectories);
+    const sourceOnlyDirectories = directories.filter((directory) => !samePathText(directory, targetDirectory));
+    if (directories.length < 2 || sourceOnlyDirectories.length === 0) {
+      showToast('Select at least one source directory in addition to the merge target.');
+      return;
+    }
+
+    const confirmed = window.confirm([
+      `Merge ${directories.length} directories for "${group.title}" into:`,
+      targetDirectory,
+      '',
+      'Existing files in the target directory will be skipped.',
+      'The other selected directories will be deleted after files are moved.',
+      '',
+      ...sourceOnlyDirectories.map((directory) => `Delete: ${directory}`)
+    ].join('\n'));
+    if (!confirmed) return;
+
+    setMergeBusyGroupId(group.id);
+    setMergeBusyMessage('Merging duplicate directories...');
+    try {
+      const result = await window.managerApi.mergeDuplicateDirectories({ targetDirectory, sourceDirectories: directories });
+      showToast(result.message);
+      if (result.ok) {
+        const mergedGroupIds = automaticallyMergedDuplicateGroupIds(duplicateGroups, targetDirectory, directories);
+        setMergedDuplicateGroupIds((current) => new Set([...current, ...mergedGroupIds]));
+      }
+    } catch (error) {
+      showToast(error instanceof Error ? error.message : String(error));
+    } finally {
+      setMergeBusyGroupId('');
+      setMergeBusyMessage('');
+    }
+  }
+
   if (loading || !state) {
     return <div className="boot">読み込み中...</div>;
   }
@@ -335,7 +399,7 @@ export function App(): JSX.Element {
         </button>
         <div className="topbar-counts">
           <span>{state.tables.length} tables</span>
-          <span>{isListLoading ? 'loading...' : `${visibleRows.length} charts`}</span>
+          <span>{activeView === 'duplicates' ? `${duplicateGroups.length} duplicate groups` : isListLoading ? 'loading...' : `${visibleRows.length} charts`}</span>
         </div>
       </header>
 
@@ -347,13 +411,13 @@ export function App(): JSX.Element {
         <aside className="sidebar">
           <section className="panel sidebar-section table-section">
             <div className="panel-title">Tables</div>
-            <button className={`tree-row ${!selectedBmsRoot && selectedTableId === null ? 'selected' : ''}`} onClick={() => void selectTable(null)}>
+            <button className={`tree-row ${activeView === 'charts' && !selectedBmsRoot && selectedTableId === null ? 'selected' : ''}`} onClick={() => void selectTable(null)}>
               <span>All Tables</span>
               <small>{state.rows.length}</small>
             </button>
             <div className="table-list">
               {sortedTables.map((table) => (
-                <button key={table.id} className={`tree-row ${!selectedBmsRoot && table.id === selectedTableId ? 'selected' : ''}`} onClick={() => void selectTable(table.id)} title={table.name}>
+                <button key={table.id} className={`tree-row ${activeView === 'charts' && !selectedBmsRoot && table.id === selectedTableId ? 'selected' : ''}`} onClick={() => void selectTable(table.id)} title={table.name}>
                   <span>{table.name}</span>
                   <small>{table.chartCount} / {table.missingCount}</small>
                 </button>
@@ -362,9 +426,14 @@ export function App(): JSX.Element {
           </section>
           <section className="panel sidebar-section roots-section">
             <div className="panel-title">BMS Path</div>
+            <button className={`tree-row duplicate-nav-row ${activeView === 'duplicates' ? 'selected' : ''}`} onClick={selectDuplicates}>
+              <Copy size={14} />
+              <span>Duplicate Charts</span>
+              <small>{duplicateGroups.length}</small>
+            </button>
             <div className="roots-list">
               {state.bmsRootNodes.map((node) => (
-                <button key={node.id} className={`tree-row path-row ${selectedBmsRoot?.path === node.path ? 'selected' : ''}`} onClick={() => selectBmsRoot(node)} title={node.path}>
+                <button key={node.id} className={`tree-row path-row ${activeView === 'charts' && selectedBmsRoot?.path === node.path ? 'selected' : ''}`} onClick={() => selectBmsRoot(node)} title={node.path}>
                   <FolderOpen size={14} />
                   <span>{node.name}</span>
                   <small>{node.chartCount ?? 0}</small>
@@ -377,29 +446,35 @@ export function App(): JSX.Element {
         <main className="mainpane">
           <div className="toolbar">
             <div className="title-block">
-              <strong>{selectedBmsRoot?.name ?? activeTable?.name ?? 'All Tables'}</strong>
-              <span>{makeSubtitle(selectedBmsRoot, activeTable, visibleRows.length)}</span>
+              <strong>{activeView === 'duplicates' ? 'Duplicate Charts' : selectedBmsRoot?.name ?? activeTable?.name ?? 'All Tables'}</strong>
+              <span>{activeView === 'duplicates' ? `${duplicateGroups.length} groups / ${redundantCopyCount} redundant copies` : makeSubtitle(selectedBmsRoot, activeTable, visibleRows.length)}</span>
             </div>
             <label className="searchbox">
               <Search size={16} />
-              <input value={searchText} onChange={(event) => void updateSearch(event.target.value)} placeholder="Search title / artist / hash / table" />
+              <input value={searchText} onChange={(event) => void updateSearch(event.target.value)} placeholder={activeView === 'duplicates' ? 'Search title / artist / hash / path' : 'Search title / artist / hash / table'} />
             </label>
-            {activeFilterCount > 0 && (
+            {activeView === 'charts' && activeFilterCount > 0 && (
               <button className="icon-text clear-filters" onClick={() => setColumnFilters({})} title="Clear column filters">
                 <X size={16} />
                 <span>{activeFilterCount} filters</span>
               </button>
             )}
-            <button className="icon-text export-button" disabled={!activeTable && !selectedBmsRoot} onClick={() => void exportActiveSelection()} title={selectedBmsRoot ? 'Export selected BMS Path' : 'Export selected table'}>
-              <Download size={16} />
-              <span>Export</span>
-            </button>
+            {activeView === 'charts' && (
+              <button className="icon-text export-button" disabled={!activeTable && !selectedBmsRoot} onClick={() => void exportActiveSelection()} title={selectedBmsRoot ? 'Export selected BMS Path' : 'Export selected table'}>
+                <Download size={16} />
+                <span>Export</span>
+              </button>
+            )}
           </div>
           {exportMessage && <div className="export-message">{exportMessage}</div>}
 
           <div className="list-region">
-            <ChartTable rows={visibleRows} sort={sort} columnFilters={columnFilters} onSort={toggleSort} onFilterClick={openFilterMenu} onContextMenu={openContextMenu} />
-            {isListLoading && <div className="loading-overlay">読み込み中...</div>}
+            {activeView === 'duplicates' ? (
+              <DuplicateGroupsView groups={visibleDuplicateGroups} totalGroups={duplicateGroups.length} busyGroupId={mergeBusyGroupId} onContextMenu={openContextMenu} onOpenPath={openPathFromMenu} onMerge={(group, targetDirectory, sourceDirectories) => void mergeDuplicateGroup(group, targetDirectory, sourceDirectories)} />
+            ) : (
+              <ChartTable rows={visibleRows} sort={sort} columnFilters={columnFilters} onSort={toggleSort} onFilterClick={openFilterMenu} onContextMenu={openContextMenu} />
+            )}
+            {activeView === 'charts' && isListLoading && <div className="loading-overlay">読み込み中...</div>}
           </div>
         </main>
 
@@ -455,6 +530,15 @@ export function App(): JSX.Element {
         </div>
       )}
 
+      {mergeBusyMessage && (
+        <div className="busy-overlay" role="status" aria-live="polite">
+          <div>
+            <RefreshCw size={24} />
+            <span>{mergeBusyMessage}</span>
+          </div>
+        </div>
+      )}
+
       {contextMenu && (
         <div className={`context-menu submenu-${contextMenu.submenuSide}`} style={{ left: contextMenu.x, top: contextMenu.y }} onClick={(event) => event.stopPropagation()}>
           <button disabled={!contextMenu.row.url1} onClick={() => openExternalFromMenu(contextMenu.row.url1)}><ExternalLink size={14} />Open URL1</button>
@@ -486,6 +570,175 @@ export function App(): JSX.Element {
       toastTimeoutRef.current = null;
     }, 3500);
   }
+}
+
+function DuplicateGroupsView({ groups, totalGroups, busyGroupId, onContextMenu, onOpenPath, onMerge }: {
+  groups: DuplicateChartGroup[];
+  totalGroups: number;
+  busyGroupId: string;
+  onContextMenu(event: React.MouseEvent, row: TableChartRow): void;
+  onOpenPath(row: TableChartRow): void;
+  onMerge(group: DuplicateChartGroup, targetDirectory: string, sourceDirectories: string[]): void;
+}): JSX.Element {
+  const [expandedGroupIds, setExpandedGroupIds] = useState<Set<string>>(new Set());
+  const [mergeTargets, setMergeTargets] = useState<Record<string, string>>({});
+  const [checkedDirectories, setCheckedDirectories] = useState<Record<string, Set<string>>>({});
+
+  useEffect(() => {
+    setExpandedGroupIds((current) => {
+      const visibleIds = new Set(groups.map((group) => group.id));
+      const next = new Set([...current].filter((id) => visibleIds.has(id)));
+      if (next.size === 0 && groups[0]) next.add(groups[0].id);
+      return next;
+    });
+  }, [groups]);
+
+  useEffect(() => {
+    setMergeTargets((currentTargets) => {
+      const nextTargets: Record<string, string> = {};
+      for (const group of groups) {
+        const directories = duplicateDirectories(group);
+        if (directories.length === 0) continue;
+        const currentTarget = currentTargets[group.id];
+        nextTargets[group.id] = directories.some((directory) => samePathText(directory.path, currentTarget)) ? currentTarget : directories[0].path;
+      }
+      return nextTargets;
+    });
+
+    setCheckedDirectories((currentChecked) => {
+      const nextChecked: Record<string, Set<string>> = {};
+      for (const group of groups) {
+        const directories = duplicateDirectories(group).map((directory) => directory.path);
+        if (directories.length === 0) continue;
+        const target = mergeTargets[group.id] && directories.some((directory) => samePathText(directory, mergeTargets[group.id]))
+          ? mergeTargets[group.id]
+          : directories[0];
+        const current = currentChecked[group.id];
+        const checked = current ? new Set(directories.filter((directory) => [...current].some((checkedDirectory) => samePathText(checkedDirectory, directory)))) : new Set(directories);
+        checked.add(target);
+        nextChecked[group.id] = checked;
+      }
+      return nextChecked;
+    });
+  }, [groups]);
+
+  function toggleGroup(groupId: string): void {
+    setExpandedGroupIds((current) => {
+      const next = new Set(current);
+      if (next.has(groupId)) next.delete(groupId);
+      else next.add(groupId);
+      return next;
+    });
+  }
+
+  function selectMergeTarget(group: DuplicateChartGroup, directory: string): void {
+    setMergeTargets((current) => ({ ...current, [group.id]: directory }));
+    setCheckedDirectories((current) => {
+      const checked = new Set(current[group.id] ?? []);
+      checked.add(directory);
+      return { ...current, [group.id]: checked };
+    });
+  }
+
+  function toggleMergeDirectory(group: DuplicateChartGroup, directory: string): void {
+    const target = mergeTargets[group.id];
+    if (samePathText(directory, target)) return;
+    setCheckedDirectories((current) => {
+      const checked = new Set(current[group.id] ?? []);
+      if (checked.has(directory)) checked.delete(directory);
+      else checked.add(directory);
+      if (target) checked.add(target);
+      return { ...current, [group.id]: checked };
+    });
+  }
+
+  if (groups.length === 0) {
+    return (
+      <div className="duplicate-empty">
+        <Copy size={28} />
+        <strong>{totalGroups === 0 ? 'No duplicate charts found' : 'No duplicate groups match the search'}</strong>
+        <span>Duplicates require an exact SHA-256 or MD5 match in the installed chart library.</span>
+      </div>
+    );
+  }
+
+  return (
+    <div className="duplicate-groups">
+      {groups.map((group) => {
+        const expanded = expandedGroupIds.has(group.id);
+        const directories = duplicateDirectories(group);
+        const mergeTarget = mergeTargets[group.id] ?? directories[0]?.path ?? '';
+        const selectedDirectories = checkedDirectories[group.id] ?? new Set(directories.map((directory) => directory.path));
+        const selectedDirectoryList = directories
+          .map((directory) => directory.path)
+          .filter((directory) => selectedDirectories.has(directory) || samePathText(directory, mergeTarget));
+        const canMerge = directories.length > 1 && selectedDirectoryList.length > 1 && !busyGroupId;
+        return (
+          <section key={group.id} className={`duplicate-group ${expanded ? 'expanded' : ''}`}>
+            <button className="duplicate-group-header" onClick={() => toggleGroup(group.id)} aria-expanded={expanded}>
+              {expanded ? <ChevronDown size={16} /> : <ChevronRight size={16} />}
+              <span className="duplicate-count">{group.copies.length}</span>
+              <span className="duplicate-heading">
+                <strong title={group.title}>{group.title}</strong>
+                <small title={group.artist}>{group.artist || '(unknown artist)'}</small>
+              </span>
+              <span className="duplicate-hashes">
+                {group.sharedSha256.length > 0 && <span title={group.sharedSha256.join('\n')}>SHA-256 {shortHash(group.sharedSha256[0])}</span>}
+                {group.sharedMd5.length > 0 && <span title={group.sharedMd5.join('\n')}>MD5 {shortHash(group.sharedMd5[0])}</span>}
+              </span>
+              <span className="duplicate-copy-label">{group.copies.length} copies</span>
+            </button>
+            {expanded && (
+              <>
+                <div className="duplicate-merge-panel">
+                  <div className="duplicate-merge-title">
+                    <strong>Merge directories</strong>
+                    <span>{directories.length > 1 ? 'Choose directories to merge and the destination.' : 'All duplicate charts are already in one directory.'}</span>
+                  </div>
+                  {directories.length > 1 && (
+                    <>
+                      <div className="duplicate-directory-list">
+                        {directories.map((directory) => {
+                          const isTarget = samePathText(directory.path, mergeTarget);
+                          const checked = isTarget || selectedDirectories.has(directory.path);
+                          return (
+                            <label key={directory.path} className={`duplicate-directory-row ${isTarget ? 'target' : ''}`}>
+                              <input type="checkbox" checked={checked} disabled={isTarget || Boolean(busyGroupId)} onChange={() => toggleMergeDirectory(group, directory.path)} />
+                              <input type="radio" name={`merge-target-${group.id}`} checked={isTarget} disabled={Boolean(busyGroupId)} onChange={() => selectMergeTarget(group, directory.path)} />
+                              <span className="duplicate-directory-path" title={directory.path}>{directory.path}</span>
+                              <small>{directory.copyCount} chart{directory.copyCount === 1 ? '' : 's'}</small>
+                            </label>
+                          );
+                        })}
+                      </div>
+                      <button className="duplicate-merge-button" disabled={!canMerge} onClick={() => onMerge(group, mergeTarget, selectedDirectoryList)}>
+                        {busyGroupId === group.id ? 'Merging...' : 'Merge selected directories'}
+                      </button>
+                    </>
+                  )}
+                </div>
+                <div className="duplicate-locations">
+                  {group.copies.map((row, index) => (
+                    <div key={row.id} className="duplicate-location" onContextMenu={(event) => onContextMenu(event, row)}>
+                      <span className="duplicate-location-index">{index + 1}</span>
+                      <span className="duplicate-location-main">
+                        <strong title={row.path || row.folder}>{row.path || row.folder || '(path unavailable)'}</strong>
+                        <small>{duplicateLocationDetails(row)}</small>
+                      </span>
+                      <button className="duplicate-open-button" disabled={!row.path && !row.folder} onClick={() => onOpenPath(row)} title="Open in Explorer">
+                        <FolderOpen size={15} />
+                        <span>Open</span>
+                      </button>
+                    </div>
+                  ))}
+                </div>
+              </>
+            )}
+          </section>
+        );
+      })}
+    </div>
+  );
 }
 
 function ChartImportDialog({ analysis, selectedCandidateId, busy, onSelect, onCancel, onConfirm }: { analysis: ChartImportAnalysis; selectedCandidateId: string; busy: boolean; onSelect(id: string): void; onCancel(): void; onConfirm(): void }): JSX.Element {
@@ -829,6 +1082,99 @@ function isRowUnderRoot(row: TableChartRow, root: string): boolean {
   return candidates.some((candidate) => candidate === normalizedRoot || candidate.startsWith(`${normalizedRoot}/`));
 }
 
-function normalizePath(value: string): string {
-  return value.replace(/\\/g, '/').toLowerCase();
+function normalizePath(value: string | null | undefined): string {
+  return (value ?? '').replace(/\\/g, '/').toLowerCase();
+}
+
+function filterDuplicateGroups(groups: DuplicateChartGroup[], query: string): DuplicateChartGroup[] {
+  const normalizedQuery = normalizeSearchQuery(query);
+  if (!normalizedQuery) return groups;
+  return groups.filter((group) => normalizeSearchQuery([
+    group.title,
+    group.artist,
+    ...group.sharedSha256,
+    ...group.sharedMd5,
+    ...group.copies.flatMap((row) => [row.title, row.subtitle, row.artist, row.path, row.folder])
+  ].join(' ')).includes(normalizedQuery));
+}
+
+function shortHash(hash: string): string {
+  return hash.length > 12 ? `${hash.slice(0, 12)}...` : hash;
+}
+
+function duplicateLocationDetails(row: TableChartRow): string {
+  const details = [
+    row.songLevel != null ? `Level ${row.songLevel}` : '',
+    row.notes != null ? `${row.notes} notes` : '',
+    row.mode != null ? `${row.mode} keys` : ''
+  ].filter(Boolean);
+  return details.join(' / ') || 'Right-click for chart actions';
+}
+
+function duplicateDirectories(group: DuplicateChartGroup): { path: string; copyCount: number }[] {
+  const directories = new Map<string, { path: string; copyCount: number }>();
+  for (const row of group.copies) {
+    const directory = chartDirectory(row);
+    if (!directory) continue;
+    const key = normalizePath(directory).replace(/\/+$/, '');
+    const current = directories.get(key);
+    if (current) current.copyCount += 1;
+    else directories.set(key, { path: directory, copyCount: 1 });
+  }
+  return [...directories.values()].sort((a, b) => a.path.localeCompare(b.path, 'ja', { numeric: true, sensitivity: 'base' }));
+}
+
+function chartDirectory(row: TableChartRow): string {
+  if (!row.path) return trimTrailingSeparators(row.folder);
+  return directoryName(row.path);
+}
+
+function directoryName(filePath: string): string {
+  const trimmed = trimTrailingSeparators(filePath);
+  const slashIndex = Math.max(trimmed.lastIndexOf('/'), trimmed.lastIndexOf('\\'));
+  return slashIndex >= 0 ? trimmed.slice(0, slashIndex) : '';
+}
+
+function trimTrailingSeparators(value: string): string {
+  return value.replace(/[\\/]+$/, '');
+}
+
+function uniqueStrings(values: string[]): string[] {
+  const seen = new Set<string>();
+  const unique: string[] = [];
+  for (const value of values) {
+    const key = pathKey(value);
+    if (!key || seen.has(key)) continue;
+    seen.add(key);
+    unique.push(value);
+  }
+  return unique;
+}
+
+function samePathText(a: string | null | undefined, b: string | null | undefined): boolean {
+  const normalizedA = pathKey(a);
+  const normalizedB = pathKey(b);
+  return Boolean(normalizedA && normalizedB) && normalizedA === normalizedB;
+}
+
+function automaticallyMergedDuplicateGroupIds(groups: DuplicateChartGroup[], targetDirectory: string, sourceDirectories: string[]): string[] {
+  const sourceKeys = new Set(sourceDirectories.map(pathKey).filter(Boolean));
+  const targetKey = pathKey(targetDirectory);
+  if (!targetKey || sourceKeys.size < 2) return [];
+
+  return groups
+    .filter((group) => {
+      const directories = duplicateDirectories(group).map((directory) => directory.path);
+      const originalKeys = new Set(directories.map(pathKey).filter(Boolean));
+      if (originalKeys.size < 2) return false;
+      if (![...originalKeys].some((key) => sourceKeys.has(key))) return false;
+
+      const mergedKeys = new Set([...originalKeys].map((key) => sourceKeys.has(key) ? targetKey : key));
+      return mergedKeys.size <= 1;
+    })
+    .map((group) => group.id);
+}
+
+function pathKey(value: string | null | undefined): string {
+  return normalizePath(value).replace(/\/+$/, '');
 }
