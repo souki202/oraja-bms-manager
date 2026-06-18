@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import type { JSX } from 'react';
 import { useVirtualizer } from '@tanstack/react-virtual';
 import { ArrowDown, ArrowUp, ArrowUpDown, ChevronDown, ChevronRight, Copy, Download, ExternalLink, Filter, FolderOpen, GitBranch, RefreshCw, Search, Settings, Upload, X } from 'lucide-react';
@@ -583,14 +583,25 @@ function DuplicateGroupsView({ groups, totalGroups, busyGroupId, onContextMenu, 
   const [expandedGroupIds, setExpandedGroupIds] = useState<Set<string>>(new Set());
   const [mergeTargets, setMergeTargets] = useState<Record<string, string>>({});
   const [checkedDirectories, setCheckedDirectories] = useState<Record<string, Set<string>>>({});
+  const scrollContainerRef = useRef<HTMLDivElement | null>(null);
+  const scrollTopRef = useRef(0);
+  const didInitializeExpandedGroupsRef = useRef(false);
 
   useEffect(() => {
     setExpandedGroupIds((current) => {
       const visibleIds = new Set(groups.map((group) => group.id));
       const next = new Set([...current].filter((id) => visibleIds.has(id)));
-      if (next.size === 0 && groups[0]) next.add(groups[0].id);
+      if (!didInitializeExpandedGroupsRef.current && next.size === 0 && groups[0]) next.add(groups[0].id);
       return next;
     });
+    if (groups.length > 0) didInitializeExpandedGroupsRef.current = true;
+  }, [groups]);
+
+  useLayoutEffect(() => {
+    const container = scrollContainerRef.current;
+    if (!container) return;
+    const maxScrollTop = Math.max(0, container.scrollHeight - container.clientHeight);
+    container.scrollTop = Math.min(scrollTopRef.current, maxScrollTop);
   }, [groups]);
 
   useEffect(() => {
@@ -663,7 +674,13 @@ function DuplicateGroupsView({ groups, totalGroups, busyGroupId, onContextMenu, 
   }
 
   return (
-    <div className="duplicate-groups">
+    <div
+      ref={scrollContainerRef}
+      className="duplicate-groups"
+      onScroll={(event) => {
+        scrollTopRef.current = event.currentTarget.scrollTop;
+      }}
+    >
       {groups.map((group) => {
         const expanded = expandedGroupIds.has(group.id);
         const directories = duplicateDirectories(group);
