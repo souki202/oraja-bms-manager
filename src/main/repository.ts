@@ -20,7 +20,7 @@ import type {
 import { clearToStatus } from '../shared/domain';
 import { createImportMatcher, type ImportMatcher } from '../shared/importMatcher';
 import { loadTables, readSongList, type ParsedTableSong } from './tableParser';
-import { openReadonlyDatabase, selectAll } from './sqlite';
+import { openReadonlyDatabase, selectAll, writeDatabase } from './sqlite';
 
 interface SongDbRow {
   md5?: string;
@@ -45,6 +45,11 @@ interface SongInfoRow {
   sha256?: string;
   density?: number;
   mainbpm?: number;
+}
+
+interface FolderDbRow {
+  path?: string;
+  parent?: string;
 }
 
 interface ScoreDbRow {
@@ -73,6 +78,7 @@ export class ManagerRepository {
   private readonly settingsPath: string;
   private stateCache: ManagerState | null = null;
   private importMatcherCache: { libraryRows: TableChartRow[]; matcher: ImportMatcher } | null = null;
+  private readonly backedUpDatabasePaths = new Set<string>();
 
   constructor(private readonly appRoot: string, dataRoot = path.join(appRoot, 'data')) {
     this.settingsPath = path.join(dataRoot, 'settings.json');
@@ -355,15 +361,26 @@ export class ManagerRepository {
         }
       }
 
+      await this.ensureDatabaseBackups(config);
+      await validateMergeDatabases(this.appRoot, config);
+
       const movedFiles: string[] = [];
       const skippedFiles: string[] = [];
       const deletedDirectories: string[] = [];
+      const movedFilePairs: MovedFilePair[] = [];
 
       for (const source of nonTargetSources) {
         const result = await moveDirectoryContentsSkippingExisting(source, targetDirectory);
         movedFiles.push(...result.movedFiles);
         skippedFiles.push(...result.skippedFiles);
+        movedFilePairs.push(...result.movedFilePairs);
       }
+
+      const databaseUpdate = await updateMergedChartDatabases(this.appRoot, config, {
+        targetDirectory,
+        sourceDirectories: nonTargetSources,
+        movedFilePairs
+      });
 
       for (const source of nonTargetSources) {
         await fs.rm(source, { recursive: true, force: false });
@@ -374,7 +391,7 @@ export class ManagerRepository {
       this.importMatcherCache = null;
       return {
         ok: true,
-        message: `Merged ${nonTargetSources.length} director${nonTargetSources.length === 1 ? 'y' : 'ies'} into ${targetDirectory}. Moved ${movedFiles.length} file(s), skipped ${skippedFiles.length} existing file(s).`,
+        message: `Merged ${nonTargetSources.length} director${nonTargetSources.length === 1 ? 'y' : 'ies'} into ${targetDirectory}. Moved ${movedFiles.length} file(s), skipped ${skippedFiles.length} existing file(s). Updated ${databaseUpdate.updatedSongs} song row(s), deleted ${databaseUpdate.deletedSongs} song row(s).`,
         targetDirectory,
         mergedDirectories: nonTargetSources,
         deletedDirectories,
@@ -489,6 +506,20 @@ export class ManagerRepository {
     }
     return this.importMatcherCache.matcher;
   }
+
+  private async ensureDatabaseBackups(config: BeatorajaConfigSummary): Promise<void> {
+    const databasePaths = uniqueStrings([
+      config.songDbPath,
+      config.songInfoDbPath ?? ''
+    ]);
+
+    for (const databasePath of databasePaths) {
+      const resolvedPath = path.resolve(databasePath);
+      if (this.backedUpDatabasePaths.has(resolvedPath)) continue;
+      await createRotatedDatabaseBackup(resolvedPath);
+      this.backedUpDatabasePaths.add(resolvedPath);
+    }
+  }
 }
 
 function hydrateRows(
@@ -536,6 +567,192 @@ function hydrateRows(
   }
 
   return { rows, tables };
+}
+
+interface MovedFilePair {
+  sourcePath: string;
+  targetPath: string;
+}
+
+interface MergeDatabaseUpdateInput {
+  targetDirectory: string;
+  sourceDirectories: string[];
+  movedFilePairs: MovedFilePair[];
+}
+
+interface MergeDatabaseUpdateSummary {
+  updatedSongs: number;
+  deletedSongs: number;
+  updatedFolders: number;
+  deletedFolders: number;
+  deletedSongInfo: number;
+}
+
+async function updateMergedChartDatabases(
+  appRoot: string,
+  config: BeatorajaConfigSummary,
+  input: MergeDatabaseUpdateInput
+): Promise<MergeDatabaseUpdateSummary> {
+  const songDb = await openReadonlyDatabase(config.songDbPath, appRoot);
+  const summary: MergeDatabaseUpdateSummary = {
+    updatedSongs: 0,
+    deletedSongs: 0,
+    updatedFolders: 0,
+    deletedFolders: 0,
+    deletedSongInfo: 0
+  };
+
+  const remainingSha256 = new Set<string>();
+  const deletedSha256 = new Set<string>();
+
+  try {
+    const songs = selectAll<SongDbRow>(songDb, 'SELECT path, sha256 FROM song');
+    const folders = tableExists(songDb, 'folder') ? selectAll<FolderDbRow>(songDb, 'SELECT path, parent FROM folder') : [];
+    const movedTargetBySourceKey = new Map(input.movedFilePairs.map((pair) => [pathKey(pair.sourcePath), pair.targetPath]));
+    const existingSongPathKeys = new Set(songs.map((song) => pathKey(String(song.path ?? ''))).filter(Boolean));
+    const folderParentByKey = new Map<string, string>();
+    const folderPathByKey = new Map<string, string>();
+
+    for (const folder of folders) {
+      const key = directoryPathKey(folder.path);
+      if (!key) continue;
+      folderPathByKey.set(key, String(folder.path ?? ''));
+      if (folder.parent) folderParentByKey.set(key, String(folder.parent));
+    }
+
+    const folderUpdates: { oldPath: string; newPath: string }[] = [];
+    const folderDeletes: string[] = [];
+    const plannedFolderParentByKey = new Map(folderParentByKey);
+
+    for (const folder of folders) {
+      const oldPath = String(folder.path ?? '');
+      if (!oldPath || !isPathUnderAnyRoot(oldPath, input.sourceDirectories)) continue;
+      const mappedPath = mapMergedSourcePath(oldPath, input.sourceDirectories, input.targetDirectory, true);
+      if (!mappedPath) continue;
+
+      const mappedKey = directoryPathKey(mappedPath);
+      if (!mappedKey || folderPathByKey.has(mappedKey)) {
+        folderDeletes.push(oldPath);
+        continue;
+      }
+
+      folderUpdates.push({ oldPath, newPath: mappedPath });
+      if (folder.parent) plannedFolderParentByKey.set(mappedKey, String(folder.parent));
+      folderPathByKey.set(mappedKey, mappedPath);
+    }
+
+    songDb.run('BEGIN TRANSACTION');
+    try {
+      for (const { oldPath, newPath } of folderUpdates) {
+        songDb.run('UPDATE folder SET path = ? WHERE path = ?', [newPath, oldPath]);
+        summary.updatedFolders += 1;
+      }
+      for (const oldPath of folderDeletes) {
+        songDb.run('DELETE FROM folder WHERE path = ?', [oldPath]);
+        summary.deletedFolders += 1;
+      }
+
+      for (const song of songs) {
+        const oldPath = String(song.path ?? '');
+        const oldPathKey = pathKey(oldPath);
+        const sha256 = lower(song.sha256);
+        if (!oldPath || !isPathUnderAnyRoot(oldPath, input.sourceDirectories)) {
+          if (sha256) remainingSha256.add(sha256);
+          continue;
+        }
+
+        const movedTargetPath = oldPathKey ? movedTargetBySourceKey.get(oldPathKey) : undefined;
+        if (movedTargetPath) {
+          const movedTargetPathKey = pathKey(movedTargetPath);
+          if (movedTargetPathKey && movedTargetPathKey !== oldPathKey && existingSongPathKeys.has(movedTargetPathKey)) {
+            songDb.run('DELETE FROM song WHERE path = ?', [oldPath]);
+            summary.deletedSongs += 1;
+            if (sha256) deletedSha256.add(sha256);
+            continue;
+          }
+
+          const targetDirectory = path.dirname(movedTargetPath);
+          const targetParent = plannedFolderParentByKey.get(directoryPathKey(targetDirectory));
+          if (targetParent) {
+            songDb.run('UPDATE song SET path = ?, parent = ? WHERE path = ?', [movedTargetPath, targetParent, oldPath]);
+          } else {
+            songDb.run('UPDATE song SET path = ? WHERE path = ?', [movedTargetPath, oldPath]);
+          }
+          summary.updatedSongs += 1;
+          if (sha256) remainingSha256.add(sha256);
+        } else {
+          songDb.run('DELETE FROM song WHERE path = ?', [oldPath]);
+          summary.deletedSongs += 1;
+          if (sha256) deletedSha256.add(sha256);
+        }
+      }
+
+      songDb.run('COMMIT');
+    } catch (error) {
+      songDb.run('ROLLBACK');
+      throw error;
+    }
+
+    await writeDatabase(config.songDbPath, songDb);
+  } finally {
+    songDb.close();
+  }
+
+  const orphanedDeletedSha256 = [...deletedSha256].filter((sha256) => !remainingSha256.has(sha256));
+  if (config.songInfoDbPath && orphanedDeletedSha256.length > 0) {
+    summary.deletedSongInfo = await deleteSongInfoRows(appRoot, config.songInfoDbPath, orphanedDeletedSha256);
+  }
+
+  return summary;
+}
+
+async function validateMergeDatabases(appRoot: string, config: BeatorajaConfigSummary): Promise<void> {
+  const songDb = await openReadonlyDatabase(config.songDbPath, appRoot);
+  try {
+    if (!tableExists(songDb, 'song')) throw new Error(`song table not found in ${config.songDbPath}`);
+  } finally {
+    songDb.close();
+  }
+
+  if (!config.songInfoDbPath) return;
+  const songInfoDb = await openReadonlyDatabase(config.songInfoDbPath, appRoot);
+  try {
+    if (!tableExists(songInfoDb, 'information')) throw new Error(`information table not found in ${config.songInfoDbPath}`);
+  } finally {
+    songInfoDb.close();
+  }
+}
+
+async function deleteSongInfoRows(appRoot: string, songInfoDbPath: string, sha256s: string[]): Promise<number> {
+  const db = await openReadonlyDatabase(songInfoDbPath, appRoot);
+  let deleted = 0;
+  try {
+    if (!tableExists(db, 'information')) return 0;
+    db.run('BEGIN TRANSACTION');
+    try {
+      for (const sha256 of sha256s) {
+        db.run('DELETE FROM information WHERE lower(sha256) = ?', [sha256]);
+        deleted += db.getRowsModified();
+      }
+      db.run('COMMIT');
+    } catch (error) {
+      db.run('ROLLBACK');
+      throw error;
+    }
+    await writeDatabase(songInfoDbPath, db);
+    return deleted;
+  } finally {
+    db.close();
+  }
+}
+
+function tableExists(db: Awaited<ReturnType<typeof openReadonlyDatabase>>, tableName: string): boolean {
+  const result = db.exec(`SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = ${sqlStringLiteral(tableName)} LIMIT 1`);
+  return Boolean(result[0]?.values.length);
+}
+
+function sqlStringLiteral(value: string): string {
+  return `'${value.replace(/'/g, "''")}'`;
 }
 
 function createLibraryRows(songs: SongDbRow[], infos: SongInfoRow[], scores: ScoreDbRow[]): TableChartRow[] {
@@ -664,6 +881,22 @@ async function firstExisting(paths: string[]): Promise<string | null> {
   return null;
 }
 
+async function createRotatedDatabaseBackup(databasePath: string): Promise<void> {
+  const backupPrefix = `${path.basename(databasePath)}.manager-backup-`;
+  const timestamp = new Date().toISOString().replace(/[-:]/g, '').replace(/\.\d{3}Z$/, 'Z');
+  const backupPath = path.join(path.dirname(databasePath), `${backupPrefix}${timestamp}-${process.pid}`);
+  await fs.copyFile(databasePath, backupPath);
+
+  const entries = await fs.readdir(path.dirname(databasePath));
+  const backups = entries
+    .filter((entry) => entry.startsWith(backupPrefix))
+    .sort((a, b) => a.localeCompare(b, 'en'));
+
+  for (const oldBackup of backups.slice(0, Math.max(0, backups.length - 2))) {
+    await fs.rm(path.join(path.dirname(databasePath), oldBackup), { force: true });
+  }
+}
+
 async function exists(filePath: string): Promise<boolean> {
   try {
     await fs.access(filePath);
@@ -708,6 +941,33 @@ function folderKey(filePath: string): string {
 
 function normalizePath(value: string): string {
   return value.replace(/\\/g, '/').toLowerCase();
+}
+
+function pathKey(value: string | null | undefined): string {
+  if (!value) return '';
+  return normalizePath(path.resolve(value)).replace(/\/+$/, '');
+}
+
+function directoryPathKey(value: string | null | undefined): string {
+  return pathKey(value);
+}
+
+function hasTrailingSeparator(value: string): boolean {
+  return /[\\/]$/.test(value);
+}
+
+function withTrailingSeparator(value: string, shouldHaveTrailingSeparator: boolean): string {
+  if (!shouldHaveTrailingSeparator) return value;
+  return /[\\/]$/.test(value) ? value : `${value}${path.sep}`;
+}
+
+function mapMergedSourcePath(value: string, sourceDirectories: string[], targetDirectory: string, preserveTrailingSeparator: boolean): string | null {
+  for (const sourceDirectory of sourceDirectories) {
+    if (!samePath(value, sourceDirectory) && !isPathInside(value, sourceDirectory)) continue;
+    const relativePath = path.relative(path.resolve(sourceDirectory), path.resolve(value));
+    return withTrailingSeparator(path.join(targetDirectory, relativePath), preserveTrailingSeparator && hasTrailingSeparator(value));
+  }
+  return null;
 }
 
 function isPathUnderRoot(filePath: string, root: string): boolean {
@@ -810,14 +1070,15 @@ function isPathUnderAnyRoot(candidate: string, roots: string[]): boolean {
   return roots.some((root) => samePath(candidate, root) || isPathInside(candidate, root));
 }
 
-async function moveDirectoryContentsSkippingExisting(sourceDirectory: string, targetDirectory: string): Promise<{ movedFiles: string[]; skippedFiles: string[] }> {
+async function moveDirectoryContentsSkippingExisting(sourceDirectory: string, targetDirectory: string): Promise<{ movedFiles: string[]; skippedFiles: string[]; movedFilePairs: MovedFilePair[] }> {
   const movedFiles: string[] = [];
   const skippedFiles: string[] = [];
-  await moveChildren(sourceDirectory, sourceDirectory, targetDirectory, movedFiles, skippedFiles);
-  return { movedFiles, skippedFiles };
+  const movedFilePairs: MovedFilePair[] = [];
+  await moveChildren(sourceDirectory, sourceDirectory, targetDirectory, movedFiles, skippedFiles, movedFilePairs);
+  return { movedFiles, skippedFiles, movedFilePairs };
 }
 
-async function moveChildren(sourceRoot: string, currentSourceDirectory: string, targetRoot: string, movedFiles: string[], skippedFiles: string[]): Promise<void> {
+async function moveChildren(sourceRoot: string, currentSourceDirectory: string, targetRoot: string, movedFiles: string[], skippedFiles: string[], movedFilePairs: MovedFilePair[]): Promise<void> {
   const entries = await fs.readdir(currentSourceDirectory, { withFileTypes: true });
   for (const entry of entries) {
     const sourcePath = path.join(currentSourceDirectory, entry.name);
@@ -834,7 +1095,7 @@ async function moveChildren(sourceRoot: string, currentSourceDirectory: string, 
       } else {
         await fs.mkdir(targetPath, { recursive: true });
       }
-      await moveChildren(sourceRoot, sourcePath, targetRoot, movedFiles, skippedFiles);
+      await moveChildren(sourceRoot, sourcePath, targetRoot, movedFiles, skippedFiles, movedFilePairs);
       continue;
     }
 
@@ -846,6 +1107,7 @@ async function moveChildren(sourceRoot: string, currentSourceDirectory: string, 
     await fs.mkdir(path.dirname(targetPath), { recursive: true });
     await moveFileAcrossVolumes(sourcePath, targetPath);
     movedFiles.push(targetPath);
+    movedFilePairs.push({ sourcePath, targetPath });
   }
 }
 

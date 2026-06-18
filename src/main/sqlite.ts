@@ -23,6 +23,12 @@ export async function openReadonlyDatabase(filePath: string, appRoot: string): P
   return new SQL.Database(new Uint8Array(bytes));
 }
 
+export async function writeDatabase(filePath: string, db: Database): Promise<void> {
+  const temporaryPath = `${filePath}.tmp-${process.pid}-${Date.now()}`;
+  await fs.writeFile(temporaryPath, Buffer.from(db.export()));
+  await fs.rename(temporaryPath, filePath);
+}
+
 export function selectAll<T extends object>(db: Database, sql: string): T[] {
   const result = db.exec(sql)[0];
   if (!result) return [];

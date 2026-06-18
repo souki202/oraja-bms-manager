@@ -7,3 +7,5 @@ data/*
 *.local
 .DS_Store
 Thumbs.db
+songdata.db
+songinfo.db
