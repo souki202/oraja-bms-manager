@@ -1,6 +1,6 @@
 {
   "name": "beatoraja-chart-manager",
-  "version": "0.2.1",
+  "version": "0.3.0",
   "private": true,
   "description": "Read-only beatoraja chart and table manager",
   "main": "dist/main/main.js",
