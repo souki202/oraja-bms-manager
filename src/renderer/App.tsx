@@ -691,14 +691,15 @@ function AudioConversionView({ onMessage, onConversionBusyChange }: { onMessage(
       }
     } finally {
       const stopped = cancelRequestedRef.current && attempted < batch.length;
+      const needsAttention = attempted - succeeded;
       setIsConvertingAll(false);
       setIsCancelRequested(false);
       cancelRequestedRef.current = false;
       setTotal(0);
       await reload();
       onMessage(stopped
-        ? `${succeeded} / ${batch.length} folders converted. Stopped after the current folder finished.`
-        : `${succeeded} / ${batch.length} folders converted.`);
+        ? `${succeeded} / ${batch.length} folders converted${needsAttention ? `, ${needsAttention} need attention` : ''}. Stopped after the current folder finished.`
+        : `${succeeded} / ${batch.length} folders converted${needsAttention ? `, ${needsAttention} need attention` : ''}.`);
     }
   }
 

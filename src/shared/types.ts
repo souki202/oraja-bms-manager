@@ -213,5 +213,11 @@ export interface AudioConversionResult {
   convertedCount: number;
   removedExistingCount: number;
   skippedCount: number;
+  skippedFiles?: AudioConversionSkippedFile[];
   message: string;
+}
+
+export interface AudioConversionSkippedFile {
+  fileName: string;
+  error: string;
 }

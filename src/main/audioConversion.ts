@@ -1,9 +1,11 @@
 import { spawn } from 'node:child_process';
 import fs from 'node:fs/promises';
+import { availableParallelism } from 'node:os';
 import path from 'node:path';
-import type { AudioConversionResult, AudioFolder } from '../shared/types';
+import type { AudioConversionResult, AudioConversionSkippedFile, AudioFolder } from '../shared/types';
 
 const vorbisQuality = '10';
+const conversionConcurrency = Math.max(1, Math.min(8, availableParallelism() - 1));
 const scanConcurrency = 8;
 const scanBatchSize = 50;
 const scanFlushIntervalMs = 300;
@@ -80,29 +82,54 @@ export async function convertAudioFolder(directory: string, roots: string[], ffm
   const wavFiles = entries.filter((entry) => entry.isFile() && path.extname(entry.name).toLowerCase() === '.wav');
   const converted = new Set<string>();
   const existingOgg = new Set<string>();
+  const skippedFiles: AudioConversionSkippedFile[] = [];
   const createdOggPaths: string[] = [];
 
   try {
-    for (const entry of wavFiles) {
-      const source = path.join(target, entry.name);
-      const oggName = `${entry.name.slice(0, -4)}.ogg`;
-      const destination = path.join(target, oggName);
-      if (await exists(destination)) {
-        existingOgg.add(entry.name.toLocaleLowerCase());
-        continue;
-      }
+    let nextIndex = 0;
+    let conversionError: unknown = null;
 
-      const temporary = path.join(target, `.${oggName}.${process.pid}-${Date.now()}.tmp.ogg`);
-      try {
-        await runFfmpeg(ffmpegPath, source, temporary);
-        await fs.rename(temporary, destination);
-      } catch (error) {
-        await fs.rm(temporary, { force: true });
-        throw error;
+    const convertNext = async (): Promise<void> => {
+      while (!conversionError) {
+        const entry = wavFiles[nextIndex];
+        nextIndex += 1;
+        if (!entry) return;
+
+        const source = path.join(target, entry.name);
+        const oggName = `${entry.name.slice(0, -4)}.ogg`;
+        const destination = path.join(target, oggName);
+        if (await exists(destination)) {
+          existingOgg.add(entry.name.toLocaleLowerCase());
+          continue;
+        }
+
+        const temporary = path.join(target, `.${oggName}.${process.pid}-${Date.now()}-${nextIndex}.tmp.ogg`);
+        try {
+          await runFfmpeg(ffmpegPath, source, temporary);
+          await fs.rename(temporary, destination);
+        } catch (error) {
+          await fs.rm(temporary, { force: true }).catch(() => undefined);
+          if (error instanceof FfmpegInputError) {
+            skippedFiles.push({ fileName: entry.name, error: error.message });
+            continue;
+          }
+          conversionError ??= error;
+          return;
+        }
+        createdOggPaths.push(destination);
+        converted.add(entry.name.toLocaleLowerCase());
       }
-      createdOggPaths.push(destination);
-      converted.add(entry.name.toLocaleLowerCase());
-    }
+    };
+
+    const workers = Array.from({ length: Math.min(conversionConcurrency, wavFiles.length) }, async () => {
+      try {
+        await convertNext();
+      } catch (error) {
+        conversionError ??= error;
+      }
+    });
+    await Promise.allSettled(workers);
+    if (conversionError) throw conversionError;
 
     const removableWavs = new Set([...converted, ...existingOgg]);
     await Promise.all([...removableWavs].map(async (lowerName) => {
@@ -112,13 +139,15 @@ export async function convertAudioFolder(directory: string, roots: string[], ffm
 
     const convertedCount = converted.size;
     const removedExistingCount = existingOgg.size;
+    const skippedCount = skippedFiles.length;
     return {
-      ok: true,
+      ok: skippedCount === 0,
       directory: target,
       convertedCount,
       removedExistingCount,
-      skippedCount: 0,
-      message: `${convertedCount} WAV converted${removedExistingCount ? `, ${removedExistingCount} duplicate WAV removed` : ''}.`
+      skippedCount,
+      skippedFiles,
+      message: makeConversionMessage(convertedCount, removedExistingCount, skippedFiles)
     };
   } catch (error) {
     await Promise.all(createdOggPaths.map((filePath) => fs.rm(filePath, { force: true })));
@@ -150,8 +179,48 @@ function runFfmpeg(ffmpegPath: string, source: string, destination: string): Pro
     let stderr = '';
     child.stderr.on('data', (chunk: Buffer) => { stderr += chunk.toString(); });
     child.on('error', reject);
-    child.on('close', (code) => code === 0 ? resolve() : reject(new Error(stderr.trim() || `FFmpeg exited with code ${code}.`)));
+    child.on('close', (code) => {
+      if (code === 0) {
+        resolve();
+        return;
+      }
+      const message = stderr.trim() || `FFmpeg exited with code ${code}.`;
+      reject(isFfmpegInputError(message) ? new FfmpegInputError(source, message) : new Error(message));
+    });
   });
+}
+
+class FfmpegInputError extends Error {
+  constructor(readonly source: string, stderr: string) {
+    super(summarizeFfmpegError(stderr));
+    this.name = 'FfmpegInputError';
+  }
+}
+
+function isFfmpegInputError(stderr: string): boolean {
+  const normalized = stderr.toLowerCase();
+  return normalized.includes('error opening input')
+    || normalized.includes('invalid data found when processing input')
+    || normalized.includes('error opening input file');
+}
+
+function summarizeFfmpegError(stderr: string): string {
+  return stderr
+    .split(/\r?\n/)
+    .map((line) => line.trim())
+    .find(Boolean) ?? 'FFmpeg could not read this file.';
+}
+
+function makeConversionMessage(convertedCount: number, removedExistingCount: number, skippedFiles: AudioConversionSkippedFile[]): string {
+  const parts = [`${convertedCount} WAV converted`];
+  if (removedExistingCount) parts.push(`${removedExistingCount} duplicate WAV removed`);
+  if (skippedFiles.length) parts.push(`${skippedFiles.length} unreadable WAV skipped`);
+  let message = `${parts.join(', ')}.`;
+  if (skippedFiles.length) {
+    const names = skippedFiles.slice(0, 3).map((file) => file.fileName).join(', ');
+    message += ` Skipped files were left in place: ${names}${skippedFiles.length > 3 ? ', ...' : ''}.`;
+  }
+  return message;
 }
 
 function isWithin(candidate: string, root: string): boolean {
