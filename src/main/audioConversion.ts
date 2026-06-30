@@ -1,14 +1,23 @@
 import { spawn } from 'node:child_process';
+import type { Dirent } from 'node:fs';
 import fs from 'node:fs/promises';
 import { availableParallelism } from 'node:os';
 import path from 'node:path';
 import type { AudioConversionResult, AudioConversionSkippedFile, AudioFolder } from '../shared/types';
 
 const vorbisQuality = '10';
-const conversionConcurrency = Math.max(1, Math.min(8, availableParallelism() - 1));
+const conversionConcurrency = Math.max(1, Math.min(4, availableParallelism() - 1));
+const conversionBatchSize = 32;
 const scanConcurrency = 8;
 const scanBatchSize = 50;
 const scanFlushIntervalMs = 300;
+
+interface AudioConversionTask {
+  entry: Dirent;
+  source: string;
+  destination: string;
+  temporary: string;
+}
 
 export interface AudioFolderScanProgress {
   folders: AudioFolder[];
@@ -80,48 +89,60 @@ export async function convertAudioFolder(directory: string, roots: string[], ffm
 
   const entries = await fs.readdir(target, { withFileTypes: true });
   const wavFiles = entries.filter((entry) => entry.isFile() && path.extname(entry.name).toLowerCase() === '.wav');
+  const oggNames = new Set(entries
+    .filter((entry) => entry.isFile() && path.extname(entry.name).toLowerCase() === '.ogg')
+    .map((entry) => entry.name.toLocaleLowerCase()));
   const converted = new Set<string>();
   const existingOgg = new Set<string>();
   const skippedFiles: AudioConversionSkippedFile[] = [];
   const createdOggPaths: string[] = [];
 
   try {
+    const tasks: AudioConversionTask[] = [];
+    for (const entry of wavFiles) {
+      const oggName = `${entry.name.slice(0, -4)}.ogg`;
+      if (oggNames.has(oggName.toLocaleLowerCase())) {
+        existingOgg.add(entry.name.toLocaleLowerCase());
+        continue;
+      }
+
+      tasks.push({
+        entry,
+        source: path.join(target, entry.name),
+        destination: path.join(target, oggName),
+        temporary: path.join(target, `.${oggName}.${process.pid}-${Date.now()}-${tasks.length}.tmp.ogg`)
+      });
+    }
+
+    const batches = chunkTasks(tasks, conversionBatchSize);
     let nextIndex = 0;
     let conversionError: unknown = null;
 
     const convertNext = async (): Promise<void> => {
       while (!conversionError) {
-        const entry = wavFiles[nextIndex];
+        const batch = batches[nextIndex];
         nextIndex += 1;
-        if (!entry) return;
+        if (!batch) return;
 
-        const source = path.join(target, entry.name);
-        const oggName = `${entry.name.slice(0, -4)}.ogg`;
-        const destination = path.join(target, oggName);
-        if (await exists(destination)) {
-          existingOgg.add(entry.name.toLocaleLowerCase());
-          continue;
-        }
-
-        const temporary = path.join(target, `.${oggName}.${process.pid}-${Date.now()}-${nextIndex}.tmp.ogg`);
         try {
-          await runFfmpeg(ffmpegPath, source, temporary);
-          await fs.rename(temporary, destination);
+          await convertBatch(ffmpegPath, batch);
+          await commitBatch(batch, converted, createdOggPaths);
         } catch (error) {
-          await fs.rm(temporary, { force: true }).catch(() => undefined);
           if (error instanceof FfmpegInputError) {
-            skippedFiles.push({ fileName: entry.name, error: error.message });
-            continue;
+            await Promise.all(batch.map((task) => fs.rm(task.temporary, { force: true }).catch(() => undefined)));
+            const fallbackError = await convertBatchIndividually(ffmpegPath, batch, converted, skippedFiles, createdOggPaths);
+            if (!fallbackError) continue;
+            conversionError ??= fallbackError;
+          } else {
+            conversionError ??= error;
           }
-          conversionError ??= error;
+          await Promise.all(batch.map((task) => fs.rm(task.temporary, { force: true }).catch(() => undefined)));
           return;
         }
-        createdOggPaths.push(destination);
-        converted.add(entry.name.toLocaleLowerCase());
       }
     };
 
-    const workers = Array.from({ length: Math.min(conversionConcurrency, wavFiles.length) }, async () => {
+    const workers = Array.from({ length: Math.min(conversionConcurrency, batches.length) }, async () => {
       try {
         await convertNext();
       } catch (error) {
@@ -155,6 +176,71 @@ export async function convertAudioFolder(directory: string, roots: string[], ffm
   }
 }
 
+async function convertBatch(ffmpegPath: string, tasks: AudioConversionTask[]): Promise<void> {
+  const args = ['-hide_banner', '-loglevel', 'error', '-nostdin'];
+  for (const task of tasks) args.push('-i', task.source);
+  tasks.forEach((task, index) => {
+    args.push('-map', `${index}:a:0`, '-vn', '-c:a', 'libvorbis', '-q:a', vorbisQuality, task.temporary);
+  });
+  await runFfmpeg(ffmpegPath, args, tasks[0]?.source ?? '');
+}
+
+async function convertBatchIndividually(
+  ffmpegPath: string,
+  tasks: AudioConversionTask[],
+  converted: Set<string>,
+  skippedFiles: AudioConversionSkippedFile[],
+  createdOggPaths: string[]
+): Promise<unknown | null> {
+  for (const task of tasks) {
+    try {
+      await convertOne(ffmpegPath, task);
+      await commitTask(task, converted, createdOggPaths);
+    } catch (error) {
+      await fs.rm(task.temporary, { force: true }).catch(() => undefined);
+      if (error instanceof FfmpegInputError) {
+        skippedFiles.push({ fileName: task.entry.name, error: error.message });
+        continue;
+      }
+      return error;
+    }
+  }
+  return null;
+}
+
+async function convertOne(ffmpegPath: string, task: AudioConversionTask): Promise<void> {
+  await runFfmpeg(ffmpegPath, [
+    '-hide_banner',
+    '-loglevel',
+    'error',
+    '-nostdin',
+    '-i',
+    task.source,
+    '-vn',
+    '-c:a',
+    'libvorbis',
+    '-q:a',
+    vorbisQuality,
+    task.temporary
+  ], task.source);
+}
+
+async function commitBatch(tasks: AudioConversionTask[], converted: Set<string>, createdOggPaths: string[]): Promise<void> {
+  for (const task of tasks) await commitTask(task, converted, createdOggPaths);
+}
+
+async function commitTask(task: AudioConversionTask, converted: Set<string>, createdOggPaths: string[]): Promise<void> {
+  await fs.rename(task.temporary, task.destination);
+  createdOggPaths.push(task.destination);
+  converted.add(task.entry.name.toLocaleLowerCase());
+}
+
+function chunkTasks<T>(items: T[], size: number): T[][] {
+  const chunks: T[][] = [];
+  for (let index = 0; index < items.length; index += size) chunks.push(items.slice(index, index + size));
+  return chunks;
+}
+
 async function scanDirectory(directory: string): Promise<{ hasWav: boolean; childDirectories: string[] }> {
   let entries;
   try {
@@ -171,11 +257,9 @@ async function scanDirectory(directory: string): Promise<{ hasWav: boolean; chil
   return { hasWav, childDirectories };
 }
 
-function runFfmpeg(ffmpegPath: string, source: string, destination: string): Promise<void> {
+function runFfmpeg(ffmpegPath: string, args: string[], sourceForError: string): Promise<void> {
   return new Promise((resolve, reject) => {
-    const child = spawn(ffmpegPath, ['-hide_banner', '-loglevel', 'error', '-nostdin', '-i', source, '-vn', '-c:a', 'libvorbis', '-q:a', vorbisQuality, destination], {
-      windowsHide: true
-    });
+    const child = spawn(ffmpegPath, args, { windowsHide: true });
     let stderr = '';
     child.stderr.on('data', (chunk: Buffer) => { stderr += chunk.toString(); });
     child.on('error', reject);
@@ -185,7 +269,7 @@ function runFfmpeg(ffmpegPath: string, source: string, destination: string): Pro
         return;
       }
       const message = stderr.trim() || `FFmpeg exited with code ${code}.`;
-      reject(isFfmpegInputError(message) ? new FfmpegInputError(source, message) : new Error(message));
+      reject(isFfmpegInputError(message) ? new FfmpegInputError(sourceForError, message) : new Error(message));
     });
   });
 }
@@ -226,10 +310,6 @@ function makeConversionMessage(convertedCount: number, removedExistingCount: num
 function isWithin(candidate: string, root: string): boolean {
   const relative = path.relative(root, candidate);
   return relative === '' || (!relative.startsWith('..') && !path.isAbsolute(relative));
-}
-
-async function exists(filePath: string): Promise<boolean> {
-  try { await fs.access(filePath); return true; } catch { return false; }
 }
 
 function isWavName(name: string): boolean {

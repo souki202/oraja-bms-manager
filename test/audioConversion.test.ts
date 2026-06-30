@@ -27,7 +27,7 @@ describe('audio conversion', () => {
   it('leaves unreadable WAV files in place and continues converting the rest of the folder', async () => {
     const root = await fs.mkdtemp(path.join(os.tmpdir(), 'bms-audio-'));
     try {
-      const ffmpegPath = path.join(process.cwd(), 'node_modules', 'ffmpeg-static', process.platform === 'win32' ? 'ffmpeg.exe' : 'ffmpeg');
+      const ffmpegPath = bundledFfmpegPath();
       await fs.writeFile(path.join(root, 'good.wav'), makeSilentWav());
       await fs.writeFile(path.join(root, 'bad.wav'), 'not a real wav');
 
@@ -43,6 +43,27 @@ describe('audio conversion', () => {
       expect(result.skippedFiles).toEqual([{ fileName: 'bad.wav', error: expect.stringContaining('Error opening input') }]);
       expect(result.message).toContain('1 unreadable WAV skipped');
       expect(result.message).toContain('bad.wav');
+    } finally {
+      await fs.rm(root, { force: true, recursive: true });
+    }
+  });
+
+  it('converts multiple readable WAV files in a batch', async () => {
+    const root = await fs.mkdtemp(path.join(os.tmpdir(), 'bms-audio-'));
+    try {
+      const ffmpegPath = bundledFfmpegPath();
+      await fs.writeFile(path.join(root, 'sound-a.wav'), makeSilentWav());
+      await fs.writeFile(path.join(root, 'sound-b.wav'), makeSilentWav());
+
+      const result = await convertAudioFolder(root, [root], ffmpegPath);
+
+      await expect(fs.access(path.join(root, 'sound-a.wav'))).rejects.toThrow();
+      await expect(fs.access(path.join(root, 'sound-b.wav'))).rejects.toThrow();
+      expect((await fs.stat(path.join(root, 'sound-a.ogg'))).size).toBeGreaterThan(0);
+      expect((await fs.stat(path.join(root, 'sound-b.ogg'))).size).toBeGreaterThan(0);
+      expect(result.ok).toBe(true);
+      expect(result.convertedCount).toBe(2);
+      expect(result.skippedCount).toBe(0);
     } finally {
       await fs.rm(root, { force: true, recursive: true });
     }
@@ -90,6 +111,10 @@ describe('audio conversion', () => {
     }
   });
 });
+
+function bundledFfmpegPath(): string {
+  return path.join(process.cwd(), 'node_modules', 'ffmpeg-static', process.platform === 'win32' ? 'ffmpeg.exe' : 'ffmpeg');
+}
 
 function makeSilentWav(): Buffer {
   const sampleRate = 8000;
