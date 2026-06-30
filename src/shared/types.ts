@@ -193,3 +193,25 @@ export interface DuplicateDirectoryMergeResult {
   movedFiles?: string[];
   skippedFiles?: string[];
 }
+
+export interface AudioFolder {
+  path: string;
+  name: string;
+}
+
+export interface AudioFolderScanUpdate {
+  scanId: string;
+  folders: AudioFolder[];
+  scannedDirectories: number;
+  done: boolean;
+  error?: string;
+}
+
+export interface AudioConversionResult {
+  ok: boolean;
+  directory: string;
+  convertedCount: number;
+  removedExistingCount: number;
+  skippedCount: number;
+  message: string;
+}

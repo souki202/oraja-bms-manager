@@ -51,6 +51,8 @@ button, input, select { font: inherit; }
 
 .icon-text span { max-width: 420px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .icon-button { width: 28px; justify-content: center; padding: 0; }
+.topbar button:disabled,
+.topbar select:disabled { opacity: .58; cursor: default; }
 .topbar-counts { margin-left: auto; display: flex; gap: 12px; color: #cbd3dc; }
 
 .diagnostics {
@@ -87,6 +89,10 @@ button, input, select { font: inherit; }
 .tree-row:hover { background: #e8f2ff; }
 .tree-row.selected { color: #fff; background: #0c7edb; }
 .tree-row.selected small { color: #e6f4ff; }
+.tree-row:disabled:not(.selected) { color: #8c98a6; cursor: default; }
+.tree-row:disabled:not(.selected) small { color: #9ca6b2; }
+.tree-row:disabled:not(.selected):hover { background: transparent; }
+.tree-row.selected:disabled { cursor: default; }
 .path-row { padding-left: 8px; }
 .duplicate-nav-row { min-height: 28px; padding-left: 8px; border-bottom: 1px solid #d7dee6; }
 .dir-children { margin-left: 16px; }
@@ -104,6 +110,24 @@ button, input, select { font: inherit; }
 .export-message { height: 24px; padding: 4px 10px; color: #2d4258; background: #eef6ff; border-bottom: 1px solid #c6d8ec; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 
 .list-region { position: relative; min-height: 0; flex: 1; display: flex; }
+.audio-conversion { min-width: 0; flex: 1; display: flex; flex-direction: column; background: #f2f5f8; }
+.audio-actions { min-height: 58px; display: flex; align-items: center; gap: 8px; padding: 8px 10px; border-bottom: 1px solid #c6d0da; background: #fff; }
+.audio-actions > div { min-width: 0; flex: 1; display: flex; flex-direction: column; gap: 2px; }
+.audio-actions span { color: #637083; }
+.audio-actions button, .audio-folder-row button { height: 29px; display: inline-flex; align-items: center; justify-content: center; gap: 6px; padding: 0 10px; border: 1px solid #aab6c2; border-radius: 3px; color: #293b4e; background: #fff; cursor: pointer; }
+.audio-actions .convert-all-button { min-width: 116px; border-color: #0a5fa5; color: #fff; background: #0c6fc0; font-weight: 700; }
+.audio-actions .stop-conversion-button { min-width: 116px; border-color: #a33f38; color: #fff; background: #c34b42; font-weight: 700; }
+.audio-actions button:disabled, .audio-folder-row button:disabled { color: #929ca7; border-color: #c4cbd2; background: #e9edf1; cursor: default; }
+.audio-progress { position: relative; height: 24px; overflow: hidden; border-bottom: 1px solid #c6d0da; background: #e5ebf1; }
+.audio-progress > div { height: 100%; background: #9ec9e9; transition: width 180ms ease; }
+.audio-progress span { position: absolute; inset: 0; display: grid; place-items: center; color: #243547; font-size: 12px; font-weight: 700; }
+.audio-folder-list { min-height: 0; flex: 1; overflow: auto; padding: 8px; }
+.audio-folder-row { min-height: 54px; display: grid; grid-template-columns: 22px minmax(0, 1fr) 82px 90px; align-items: center; gap: 8px; margin-bottom: 5px; padding: 7px 9px; border: 1px solid #cbd4dd; background: #fff; }
+.audio-folder-row > div { min-width: 0; display: flex; flex-direction: column; gap: 2px; }
+.audio-folder-row strong, .audio-folder-row span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.audio-folder-row span { color: #6b7888; font-size: 12px; }
+.audio-folder-row b { color: #40566b; text-align: right; font-size: 12px; }
+.spin { animation: busy-spin 900ms linear infinite; }
 .chart-table-wrap { min-height: 0; flex: 1; overflow: auto; }
 .loading-overlay { position: absolute; inset: 0; display: grid; place-items: center; color: #233242; background: rgba(248, 250, 252, .72); font-weight: 700; }
 

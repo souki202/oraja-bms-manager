@@ -30,6 +30,10 @@
       {
         "from": "node_modules/sql.js/dist/sql-wasm.wasm",
         "to": "sql-wasm.wasm"
+      },
+      {
+        "from": "node_modules/ffmpeg-static/ffmpeg.exe",
+        "to": "ffmpeg.exe"
       }
     ],
     "asar": true,
@@ -49,6 +53,7 @@
   },
   "dependencies": {
     "@tanstack/react-virtual": "^3.13.24",
+    "ffmpeg-static": "^5.3.0",
     "lucide-react": "^1.16.0",
     "react": "^19.2.6",
     "react-dom": "^19.2.6",

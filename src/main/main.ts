@@ -1,9 +1,11 @@
 import { app, BrowserWindow, dialog, ipcMain, shell } from 'electron';
+import { randomUUID } from 'node:crypto';
 import fs from 'node:fs/promises';
 import path from 'node:path';
 import { ManagerRepository } from './repository';
 import { extractBokutachiChartId } from '../shared/ir';
-import type { AppSettings, BokutachiResolvePayload, ChartImportPayload, DuplicateDirectoryMergePayload, ExportPayload, ExportResult, OpenPathPayload } from '../shared/types';
+import { convertAudioFolder, findAudioFolders, scanAudioFolders, sortAudioFolders } from './audioConversion';
+import type { AppSettings, AudioFolderScanUpdate, BokutachiResolvePayload, ChartImportPayload, DuplicateDirectoryMergePayload, ExportPayload, ExportResult, OpenPathPayload } from '../shared/types';
 
 const appRoot = app.getAppPath();
 const dataRoot = app.isPackaged ? app.getPath('userData') : path.join(appRoot, 'data');
@@ -12,6 +14,7 @@ if (!app.isPackaged) {
 }
 
 const repository = new ManagerRepository(appRoot, dataRoot);
+const audioScans = new Map<string, { cancelled: boolean }>();
 
 function createWindow(): void {
   const window = new BrowserWindow({
@@ -52,6 +55,60 @@ ipcMain.handle('settings:choose-root', async () => {
 });
 
 ipcMain.handle('directory:list', (_event, dirPath: string) => repository.listDirectories(dirPath));
+
+ipcMain.handle('audio:list-folders', async () => {
+  const state = await repository.loadState();
+  return findAudioFolders(state.beatoraja?.bmsRoots ?? []);
+});
+
+ipcMain.handle('audio:scan-start', async (event): Promise<string> => {
+  const state = await repository.loadState();
+  const roots = state.beatoraja?.bmsRoots ?? [];
+  const scanId = randomUUID();
+  const scan = { cancelled: false };
+  const folders: AudioFolderScanUpdate['folders'] = [];
+  audioScans.set(scanId, scan);
+
+  const sendUpdate = (update: Omit<AudioFolderScanUpdate, 'scanId'>): void => {
+    if (event.sender.isDestroyed()) return;
+    event.sender.send('audio:scan-update', { scanId, ...update } satisfies AudioFolderScanUpdate);
+  };
+
+  setImmediate(() => {
+    void scanAudioFolders(roots, {
+      isCancelled: () => scan.cancelled || event.sender.isDestroyed(),
+      onProgress: (progress) => {
+        folders.push(...progress.folders);
+        sendUpdate({ folders: [], scannedDirectories: progress.scannedDirectories, done: false });
+      }
+    }).then((scannedDirectories) => {
+      if (!scan.cancelled) sendUpdate({ folders: sortAudioFolders(folders), scannedDirectories, done: true });
+    }).catch((error: unknown) => {
+      sendUpdate({ folders: [], scannedDirectories: 0, done: true, error: error instanceof Error ? error.message : String(error) });
+    }).finally(() => {
+      audioScans.delete(scanId);
+    });
+  });
+
+  return scanId;
+});
+
+ipcMain.handle('audio:scan-cancel', (_event, scanId: string): boolean => {
+  const scan = audioScans.get(scanId);
+  if (!scan) return false;
+  scan.cancelled = true;
+  audioScans.delete(scanId);
+  return true;
+});
+
+ipcMain.handle('audio:convert-folder', async (_event, directory: string) => {
+  const state = await repository.loadState();
+  const roots = state.beatoraja?.bmsRoots ?? [];
+  const ffmpegPath = app.isPackaged
+    ? path.join(process.resourcesPath, 'ffmpeg.exe')
+    : path.join(appRoot, 'node_modules', 'ffmpeg-static', 'ffmpeg.exe');
+  return convertAudioFolder(directory, roots, ffmpegPath);
+});
 
 ipcMain.handle('table:export', async (_event, payload: ExportPayload): Promise<ExportResult> => {
   const result = await dialog.showOpenDialog({

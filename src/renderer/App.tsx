@@ -1,8 +1,8 @@
 import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import type { JSX } from 'react';
 import { useVirtualizer } from '@tanstack/react-virtual';
-import { ArrowDown, ArrowUp, ArrowUpDown, ChevronDown, ChevronRight, Copy, Download, ExternalLink, Filter, FolderOpen, GitBranch, RefreshCw, Search, Settings, Upload, X } from 'lucide-react';
-import type { ChartImportAnalysis, DirectoryNode, DuplicateChartGroup, ImportCandidate, ManagerState, TableChartRow, TableSummary } from '../shared/types';
+import { ArrowDown, ArrowUp, ArrowUpDown, AudioLines, ChevronDown, ChevronRight, Copy, Download, ExternalLink, Filter, FolderOpen, GitBranch, RefreshCw, Search, Settings, Upload, X } from 'lucide-react';
+import type { AudioFolder, ChartImportAnalysis, DirectoryNode, DuplicateChartGroup, ImportCandidate, ManagerState, TableChartRow, TableSummary } from '../shared/types';
 import type { ChartColumnFilter, ChartColumnFilters, ChartFilterCache, ChartFilterKey, UrlFilterMode } from '../shared/chartFilters';
 import { clearStatuses, countActiveColumnFilters, isColumnFilterActive, matchesChartFilters, normalizeSearchQuery, prepareColumnFilters } from '../shared/chartFilters';
 import { countRedundantChartCopies, findDuplicateChartGroups } from '../shared/duplicateCharts';
@@ -27,7 +27,7 @@ type SortDirection = 'asc' | 'desc';
 type SortState = { key: SortKey; direction: SortDirection };
 type TableColumn = { key: SortKey; label: string; width: number; minWidth: number };
 type FilterMenuState = { key: SortKey; x: number; y: number } | null;
-type ActiveView = 'charts' | 'duplicates';
+type ActiveView = 'charts' | 'duplicates' | 'audio';
 
 const defaultSort: SortState = { key: 'title', direction: 'asc' };
 const editorVersion = String(packageJson.version ?? '');
@@ -79,6 +79,7 @@ export function App(): JSX.Element {
   const [importBusyMessage, setImportBusyMessage] = useState('');
   const [mergeBusyGroupId, setMergeBusyGroupId] = useState('');
   const [mergeBusyMessage, setMergeBusyMessage] = useState('');
+  const [isAudioConversionBusy, setIsAudioConversionBusy] = useState(false);
   const [mergedDuplicateGroupIds, setMergedDuplicateGroupIds] = useState<Set<string>>(new Set());
   const toastTimeoutRef = useRef<number | null>(null);
 
@@ -170,28 +171,42 @@ export function App(): JSX.Element {
   const activeTable = activeView === 'charts' && !selectedBmsRoot ? state?.tables.find((table) => table.id === selectedTableId) ?? null : null;
 
   async function chooseRoot(): Promise<void> {
+    if (isAudioConversionBusy) return;
     const root = await window.managerApi.chooseRoot();
     if (root) await saveSettings({ beatorajaRoot: root });
   }
 
   async function selectPlayer(playerId: string): Promise<void> {
+    if (isAudioConversionBusy) return;
     await saveSettings({ selectedPlayerId: playerId });
   }
 
   async function selectTable(tableId: string | null): Promise<void> {
+    if (isAudioConversionBusy) return;
     setActiveView('charts');
     setSelectedBmsRoot(null);
     setSelectedTableId(tableId);
   }
 
   function selectBmsRoot(node: DirectoryNode): void {
+    if (isAudioConversionBusy) return;
     setActiveView('charts');
     setSelectedBmsRoot(node);
     setSelectedTableId(null);
   }
 
   function selectDuplicates(): void {
+    if (isAudioConversionBusy) return;
     setActiveView('duplicates');
+    setSelectedBmsRoot(null);
+    setSelectedTableId(null);
+    setSimilarTarget(null);
+    setColumnFilters({});
+  }
+
+  function selectAudioConversion(): void {
+    if (isAudioConversionBusy) return;
+    setActiveView('audio');
     setSelectedBmsRoot(null);
     setSelectedTableId(null);
     setSimilarTarget(null);
@@ -291,6 +306,7 @@ export function App(): JSX.Element {
   async function handleDrop(event: React.DragEvent): Promise<void> {
     event.preventDefault();
     setIsDragOver(false);
+    if (isAudioConversionBusy) return;
     setContextMenu(null);
     setFilterMenu(null);
 
@@ -387,19 +403,19 @@ export function App(): JSX.Element {
     <div className={`app ${isDragOver ? 'drag-over' : ''}`} onClick={() => { setContextMenu(null); setFilterMenu(null); }} onDragEnter={handleDragOver} onDragOver={handleDragOver} onDragLeave={handleDragLeave} onDrop={(event) => void handleDrop(event)}>
       <header className="topbar">
         <div className="brand">beatoraja Manager</div>
-        <button className="icon-text" onClick={chooseRoot} title="beatoraja directory">
+        <button className="icon-text" onClick={chooseRoot} disabled={isAudioConversionBusy} title="beatoraja directory">
           <Settings size={16} />
           <span>{state.beatoraja?.root ?? 'Select beatoraja'}</span>
         </button>
-        <select value={state.selectedPlayer?.id ?? ''} onChange={(event) => void selectPlayer(event.target.value)}>
+        <select value={state.selectedPlayer?.id ?? ''} disabled={isAudioConversionBusy} onChange={(event) => void selectPlayer(event.target.value)}>
           {state.players.map((player) => <option key={player.id} value={player.id}>{player.name} ({player.id})</option>)}
         </select>
-        <button className="icon-button" onClick={() => void load()} title="Reload">
+        <button className="icon-button" onClick={() => void load()} disabled={isAudioConversionBusy} title="Reload">
           <RefreshCw size={16} />
         </button>
         <div className="topbar-counts">
           <span>{state.tables.length} tables</span>
-          <span>{activeView === 'duplicates' ? `${duplicateGroups.length} duplicate groups` : isListLoading ? 'loading...' : `${visibleRows.length} charts`}</span>
+          <span>{activeView === 'duplicates' ? `${duplicateGroups.length} duplicate groups` : activeView === 'audio' ? 'WAV → OGG' : isListLoading ? 'loading...' : `${visibleRows.length} charts`}</span>
         </div>
       </header>
 
@@ -411,13 +427,13 @@ export function App(): JSX.Element {
         <aside className="sidebar">
           <section className="panel sidebar-section table-section">
             <div className="panel-title">Tables</div>
-            <button className={`tree-row ${activeView === 'charts' && !selectedBmsRoot && selectedTableId === null ? 'selected' : ''}`} onClick={() => void selectTable(null)}>
+            <button className={`tree-row ${activeView === 'charts' && !selectedBmsRoot && selectedTableId === null ? 'selected' : ''}`} disabled={isAudioConversionBusy} onClick={() => void selectTable(null)}>
               <span>All Tables</span>
               <small>{state.rows.length}</small>
             </button>
             <div className="table-list">
               {sortedTables.map((table) => (
-                <button key={table.id} className={`tree-row ${activeView === 'charts' && !selectedBmsRoot && table.id === selectedTableId ? 'selected' : ''}`} onClick={() => void selectTable(table.id)} title={table.name}>
+                <button key={table.id} className={`tree-row ${activeView === 'charts' && !selectedBmsRoot && table.id === selectedTableId ? 'selected' : ''}`} disabled={isAudioConversionBusy} onClick={() => void selectTable(table.id)} title={table.name}>
                   <span>{table.name}</span>
                   <small>{table.chartCount} / {table.missingCount}</small>
                 </button>
@@ -426,14 +442,18 @@ export function App(): JSX.Element {
           </section>
           <section className="panel sidebar-section roots-section">
             <div className="panel-title">BMS Path</div>
-            <button className={`tree-row duplicate-nav-row ${activeView === 'duplicates' ? 'selected' : ''}`} onClick={selectDuplicates}>
+            <button className={`tree-row duplicate-nav-row ${activeView === 'duplicates' ? 'selected' : ''}`} disabled={isAudioConversionBusy} onClick={selectDuplicates}>
               <Copy size={14} />
               <span>Duplicate Charts</span>
               <small>{duplicateGroups.length}</small>
             </button>
+            <button className={`tree-row duplicate-nav-row ${activeView === 'audio' ? 'selected' : ''}`} disabled={isAudioConversionBusy} onClick={selectAudioConversion}>
+              <AudioLines size={14} />
+              <span>WAV → OGG</span>
+            </button>
             <div className="roots-list">
               {state.bmsRootNodes.map((node) => (
-                <button key={node.id} className={`tree-row path-row ${activeView === 'charts' && selectedBmsRoot?.path === node.path ? 'selected' : ''}`} onClick={() => selectBmsRoot(node)} title={node.path}>
+                <button key={node.id} className={`tree-row path-row ${activeView === 'charts' && selectedBmsRoot?.path === node.path ? 'selected' : ''}`} disabled={isAudioConversionBusy} onClick={() => selectBmsRoot(node)} title={node.path}>
                   <FolderOpen size={14} />
                   <span>{node.name}</span>
                   <small>{node.chartCount ?? 0}</small>
@@ -446,13 +466,13 @@ export function App(): JSX.Element {
         <main className="mainpane">
           <div className="toolbar">
             <div className="title-block">
-              <strong>{activeView === 'duplicates' ? 'Duplicate Charts' : selectedBmsRoot?.name ?? activeTable?.name ?? 'All Tables'}</strong>
-              <span>{activeView === 'duplicates' ? `${duplicateGroups.length} groups / ${redundantCopyCount} redundant copies` : makeSubtitle(selectedBmsRoot, activeTable, visibleRows.length)}</span>
+              <strong>{activeView === 'duplicates' ? 'Duplicate Charts' : activeView === 'audio' ? 'Audio Conversion' : selectedBmsRoot?.name ?? activeTable?.name ?? 'All Tables'}</strong>
+              <span>{activeView === 'duplicates' ? `${duplicateGroups.length} groups / ${redundantCopyCount} redundant copies` : activeView === 'audio' ? 'Convert WAV files without changing charts' : makeSubtitle(selectedBmsRoot, activeTable, visibleRows.length)}</span>
             </div>
-            <label className="searchbox">
+            {activeView !== 'audio' && <label className="searchbox">
               <Search size={16} />
               <input value={searchText} onChange={(event) => void updateSearch(event.target.value)} placeholder={activeView === 'duplicates' ? 'Search title / artist / hash / path' : 'Search title / artist / hash / table'} />
-            </label>
+            </label>}
             {activeView === 'charts' && activeFilterCount > 0 && (
               <button className="icon-text clear-filters" onClick={() => setColumnFilters({})} title="Clear column filters">
                 <X size={16} />
@@ -460,7 +480,7 @@ export function App(): JSX.Element {
               </button>
             )}
             {activeView === 'charts' && (
-              <button className="icon-text export-button" disabled={!activeTable && !selectedBmsRoot} onClick={() => void exportActiveSelection()} title={selectedBmsRoot ? 'Export selected BMS Path' : 'Export selected table'}>
+              <button className="icon-text export-button" disabled={isAudioConversionBusy || (!activeTable && !selectedBmsRoot)} onClick={() => void exportActiveSelection()} title={selectedBmsRoot ? 'Export selected BMS Path' : 'Export selected table'}>
                 <Download size={16} />
                 <span>Export</span>
               </button>
@@ -471,6 +491,8 @@ export function App(): JSX.Element {
           <div className="list-region">
             {activeView === 'duplicates' ? (
               <DuplicateGroupsView groups={visibleDuplicateGroups} totalGroups={duplicateGroups.length} busyGroupId={mergeBusyGroupId} onContextMenu={openContextMenu} onOpenPath={openPathFromMenu} onMerge={(group, targetDirectory, sourceDirectories) => void mergeDuplicateGroup(group, targetDirectory, sourceDirectories)} />
+            ) : activeView === 'audio' ? (
+              <AudioConversionView onMessage={showToast} onConversionBusyChange={setIsAudioConversionBusy} />
             ) : (
               <ChartTable rows={visibleRows} sort={sort} columnFilters={columnFilters} onSort={toggleSort} onFilterClick={openFilterMenu} onContextMenu={openContextMenu} />
             )}
@@ -570,6 +592,151 @@ export function App(): JSX.Element {
       toastTimeoutRef.current = null;
     }, 3500);
   }
+}
+
+function AudioConversionView({ onMessage, onConversionBusyChange }: { onMessage(message: string): void; onConversionBusyChange(busy: boolean): void }): JSX.Element {
+  const [folders, setFolders] = useState<AudioFolder[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [scannedDirectories, setScannedDirectories] = useState(0);
+  const [busyPath, setBusyPath] = useState('');
+  const [isConvertingAll, setIsConvertingAll] = useState(false);
+  const [isCancelRequested, setIsCancelRequested] = useState(false);
+  const [completed, setCompleted] = useState(0);
+  const [total, setTotal] = useState(0);
+  const scanIdRef = useRef('');
+  const cancelRequestedRef = useRef(false);
+  const folderPathsRef = useRef<Set<string>>(new Set());
+
+  const isBusy = Boolean(busyPath) || isConvertingAll;
+
+  useEffect(() => {
+    const unsubscribe = window.managerApi.onAudioFolderScanUpdate((update) => {
+      if (update.scanId !== scanIdRef.current) return;
+      if (update.error) {
+        onMessage(update.error);
+        setLoading(false);
+        return;
+      }
+      setScannedDirectories(update.scannedDirectories);
+      if (update.done) {
+        folderPathsRef.current = new Set(update.folders.map((folder) => folder.path));
+        setFolders(update.folders);
+        setLoading(false);
+      }
+    });
+    void reload();
+    return () => {
+      const scanId = scanIdRef.current;
+      if (scanId) void window.managerApi.cancelAudioFolderScan(scanId);
+      onConversionBusyChange(false);
+      unsubscribe();
+    };
+  }, []);
+
+  useEffect(() => {
+    onConversionBusyChange(isBusy);
+  }, [isBusy, onConversionBusyChange]);
+
+  async function reload(): Promise<void> {
+    const previousScanId = scanIdRef.current;
+    if (previousScanId) void window.managerApi.cancelAudioFolderScan(previousScanId);
+    scanIdRef.current = '';
+    folderPathsRef.current = new Set();
+    setFolders([]);
+    setScannedDirectories(0);
+    setLoading(true);
+    try {
+      scanIdRef.current = await window.managerApi.startAudioFolderScan();
+    } catch (error) {
+      onMessage(error instanceof Error ? error.message : String(error));
+      setLoading(false);
+    }
+  }
+
+  async function convertOne(folder: AudioFolder, confirmed = false): Promise<boolean> {
+    if (!confirmed && !window.confirm(`Convert WAV files in this folder to OGG?\n\n${folder.path}\n\nIf a matching OGG already exists, the WAV will be removed without reconverting.`)) return false;
+    setBusyPath(folder.path);
+    try {
+      const result = await window.managerApi.convertAudioFolder(folder.path);
+      onMessage(result.message);
+      if (result.ok) {
+        folderPathsRef.current.delete(folder.path);
+        setFolders((previous) => previous.filter((item) => item.path !== folder.path));
+      }
+      return result.ok;
+    } catch (error) {
+      onMessage(`${folder.name}: ${error instanceof Error ? error.message : String(error)}`);
+      return false;
+    } finally {
+      setBusyPath('');
+    }
+  }
+
+  async function convertAll(): Promise<void> {
+    if (!window.confirm(`Convert WAV files in all ${folders.length} folders to OGG?\n\nIf matching OGG files already exist, those WAV files will be removed without reconverting.`)) return;
+    const batch = [...folders];
+    cancelRequestedRef.current = false;
+    setIsCancelRequested(false);
+    setIsConvertingAll(true);
+    setTotal(batch.length);
+    setCompleted(0);
+    let succeeded = 0;
+    let attempted = 0;
+    try {
+      for (let index = 0; index < batch.length; index += 1) {
+        if (cancelRequestedRef.current) break;
+        if (await convertOne(batch[index], true)) succeeded += 1;
+        attempted = index + 1;
+        setCompleted(attempted);
+      }
+    } finally {
+      const stopped = cancelRequestedRef.current && attempted < batch.length;
+      setIsConvertingAll(false);
+      setIsCancelRequested(false);
+      cancelRequestedRef.current = false;
+      setTotal(0);
+      await reload();
+      onMessage(stopped
+        ? `${succeeded} / ${batch.length} folders converted. Stopped after the current folder finished.`
+        : `${succeeded} / ${batch.length} folders converted.`);
+    }
+  }
+
+  function requestCancelAll(): void {
+    cancelRequestedRef.current = true;
+    setIsCancelRequested(true);
+    onMessage('Stop requested. Conversion will end after the current folder finishes.');
+  }
+
+  return (
+    <div className="audio-conversion">
+      <div className="audio-actions">
+        <div>
+          <strong>{loading ? 'Scanning BMS paths...' : `${folders.length} folders with WAV files`}</strong>
+          <span>{loading ? `${scannedDirectories.toLocaleString()} directories checked. The list will appear when scanning is complete.` : 'Existing OGG files are kept; matching WAV files are removed.'}</span>
+        </div>
+        <button onClick={() => void reload()} disabled={isBusy}><RefreshCw size={15} />Rescan</button>
+        {isConvertingAll ? (
+          <button className="stop-conversion-button" onClick={requestCancelAll} disabled={isCancelRequested}><X size={15} />{isCancelRequested ? 'Stopping...' : 'Stop'}</button>
+        ) : (
+          <button className="convert-all-button" onClick={() => void convertAll()} disabled={loading || isBusy || folders.length === 0}><AudioLines size={15} />Convert All</button>
+        )}
+      </div>
+      {total > 0 && <div className="audio-progress"><div style={{ width: `${completed / total * 100}%` }} /><span>{isCancelRequested ? `Stopping after current folder... ${completed} / ${total}` : `${completed} / ${total} folders`}</span></div>}
+      <div className="audio-folder-list">
+        {!loading && folders.length === 0 && <div className="duplicate-empty"><AudioLines size={28} /><strong>No WAV files found</strong><span>All scanned BMS folders are already converted.</span></div>}
+        {loading && folders.length === 0 && <div className="duplicate-empty"><RefreshCw className="spin" size={28} /><strong>Scanning BMS folders...</strong><span>The full list will appear after scanning is complete.</span></div>}
+        {folders.map((folder) => (
+          <div className="audio-folder-row" key={folder.path}>
+            <FolderOpen size={17} />
+            <div><strong>{folder.name}</strong><span title={folder.path}>{folder.path}</span></div>
+            <b>WAV found</b>
+            <button disabled={isBusy} onClick={() => void convertOne(folder)}>{busyPath === folder.path ? <RefreshCw className="spin" size={14} /> : <AudioLines size={14} />}Convert</button>
+          </div>
+        ))}
+      </div>
+    </div>
+  );
 }
 
 function DuplicateGroupsView({ groups, totalGroups, busyGroupId, onContextMenu, onOpenPath, onMerge }: {
