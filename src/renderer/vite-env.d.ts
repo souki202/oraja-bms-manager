@@ -1,6 +1,6 @@
 /// <reference types="vite/client" />
 
-import type { AppSettings, AudioConversionResult, AudioFolder, AudioFolderScanUpdate, BokutachiResolvePayload, ChartImportAnalysis, ChartImportPayload, ChartImportResult, DirectoryNode, DuplicateDirectoryMergePayload, DuplicateDirectoryMergeResult, ExportPayload, ExportResult, ManagerState, OpenPathPayload } from '../shared/types';
+import type { AppSettings, AudioConversionResult, AudioFolder, AudioFolderScanUpdate, BgaCleanupResult, BgaFolder, BgaFolderScanUpdate, BokutachiResolvePayload, ChartImportAnalysis, ChartImportPayload, ChartImportResult, DirectoryNode, DuplicateDirectoryMergePayload, DuplicateDirectoryMergeResult, ExportPayload, ExportResult, ManagerState, OpenPathPayload } from '../shared/types';
 
 declare global {
   interface Window {
@@ -14,6 +14,11 @@ declare global {
       cancelAudioFolderScan(scanId: string): Promise<boolean>;
       onAudioFolderScanUpdate(listener: (update: AudioFolderScanUpdate) => void): () => void;
       convertAudioFolder(directory: string): Promise<AudioConversionResult>;
+      listBgaFolders(): Promise<BgaFolder[]>;
+      startBgaFolderScan(): Promise<string>;
+      cancelBgaFolderScan(scanId: string): Promise<boolean>;
+      onBgaFolderScanUpdate(listener: (update: BgaFolderScanUpdate) => void): () => void;
+      cleanupBgaFolder(directory: string): Promise<BgaCleanupResult>;
       exportTable(payload: ExportPayload): Promise<ExportResult>;
       getPathForFile(file: File): string;
       analyzeDroppedChart(paths: string[]): Promise<ChartImportAnalysis>;

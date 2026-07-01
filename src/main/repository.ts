@@ -146,6 +146,21 @@ export class ManagerRepository {
     }
   }
 
+  async loadBmsRoots(): Promise<string[]> {
+    const settings = await this.loadSettings();
+    let root = settings.beatorajaRoot;
+    const guessedRoot = path.dirname(this.appRoot);
+    if (!root && await exists(path.join(guessedRoot, 'songdata.db'))) root = guessedRoot;
+    if (!root) return [];
+
+    try {
+      const config = await this.loadBeatorajaConfig(root);
+      return config.bmsRoots;
+    } catch {
+      return [];
+    }
+  }
+
   async saveSettings(patch: Partial<AppSettings>): Promise<AppSettings> {
     const current = await this.loadSettings();
     const next = { ...current, ...patch };

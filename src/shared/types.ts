@@ -221,3 +221,36 @@ export interface AudioConversionSkippedFile {
   fileName: string;
   error: string;
 }
+
+export interface BgaDuplicateFile {
+  legacyFileName: string;
+  mp4FileName: string;
+}
+
+export interface BgaFolder {
+  path: string;
+  name: string;
+  duplicates: BgaDuplicateFile[];
+}
+
+export interface BgaFolderScanUpdate {
+  scanId: string;
+  folders: BgaFolder[];
+  scannedDirectories: number;
+  done: boolean;
+  error?: string;
+}
+
+export interface BgaCleanupResult {
+  ok: boolean;
+  directory: string;
+  deletedCount: number;
+  failedCount: number;
+  failedFiles?: BgaCleanupFailedFile[];
+  message: string;
+}
+
+export interface BgaCleanupFailedFile {
+  fileName: string;
+  error: string;
+}

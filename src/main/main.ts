@@ -5,7 +5,8 @@ import path from 'node:path';
 import { ManagerRepository } from './repository';
 import { extractBokutachiChartId } from '../shared/ir';
 import { convertAudioFolder, findAudioFolders, scanAudioFolders, sortAudioFolders } from './audioConversion';
-import type { AppSettings, AudioFolderScanUpdate, BokutachiResolvePayload, ChartImportPayload, DuplicateDirectoryMergePayload, ExportPayload, ExportResult, OpenPathPayload } from '../shared/types';
+import { cleanupBgaFolder, findBgaFolders, scanBgaFolders, sortBgaFolders } from './bgaCleanup';
+import type { AppSettings, AudioFolderScanUpdate, BgaFolderScanUpdate, BokutachiResolvePayload, ChartImportPayload, DuplicateDirectoryMergePayload, ExportPayload, ExportResult, OpenPathPayload } from '../shared/types';
 
 const appRoot = app.getAppPath();
 const dataRoot = app.isPackaged ? app.getPath('userData') : path.join(appRoot, 'data');
@@ -15,6 +16,7 @@ if (!app.isPackaged) {
 
 const repository = new ManagerRepository(appRoot, dataRoot);
 const audioScans = new Map<string, { cancelled: boolean }>();
+const bgaScans = new Map<string, { cancelled: boolean }>();
 
 function createWindow(): void {
   const window = new BrowserWindow({
@@ -57,13 +59,11 @@ ipcMain.handle('settings:choose-root', async () => {
 ipcMain.handle('directory:list', (_event, dirPath: string) => repository.listDirectories(dirPath));
 
 ipcMain.handle('audio:list-folders', async () => {
-  const state = await repository.loadState();
-  return findAudioFolders(state.beatoraja?.bmsRoots ?? []);
+  return findAudioFolders(await repository.loadBmsRoots());
 });
 
 ipcMain.handle('audio:scan-start', async (event): Promise<string> => {
-  const state = await repository.loadState();
-  const roots = state.beatoraja?.bmsRoots ?? [];
+  const roots = await repository.loadBmsRoots();
   const scanId = randomUUID();
   const scan = { cancelled: false };
   const folders: AudioFolderScanUpdate['folders'] = [];
@@ -102,12 +102,58 @@ ipcMain.handle('audio:scan-cancel', (_event, scanId: string): boolean => {
 });
 
 ipcMain.handle('audio:convert-folder', async (_event, directory: string) => {
-  const state = await repository.loadState();
-  const roots = state.beatoraja?.bmsRoots ?? [];
+  const roots = await repository.loadBmsRoots();
   const ffmpegPath = app.isPackaged
     ? path.join(process.resourcesPath, 'ffmpeg.exe')
     : path.join(appRoot, 'node_modules', 'ffmpeg-static', 'ffmpeg.exe');
   return convertAudioFolder(directory, roots, ffmpegPath);
+});
+
+ipcMain.handle('bga:list-folders', async () => {
+  return findBgaFolders(await repository.loadBmsRoots());
+});
+
+ipcMain.handle('bga:scan-start', async (event): Promise<string> => {
+  const roots = await repository.loadBmsRoots();
+  const scanId = randomUUID();
+  const scan = { cancelled: false };
+  const folders: BgaFolderScanUpdate['folders'] = [];
+  bgaScans.set(scanId, scan);
+
+  const sendUpdate = (update: Omit<BgaFolderScanUpdate, 'scanId'>): void => {
+    if (event.sender.isDestroyed()) return;
+    event.sender.send('bga:scan-update', { scanId, ...update } satisfies BgaFolderScanUpdate);
+  };
+
+  setImmediate(() => {
+    void scanBgaFolders(roots, {
+      isCancelled: () => scan.cancelled || event.sender.isDestroyed(),
+      onProgress: (progress) => {
+        folders.push(...progress.folders);
+        sendUpdate({ folders: [], scannedDirectories: progress.scannedDirectories, done: false });
+      }
+    }).then((scannedDirectories) => {
+      if (!scan.cancelled) sendUpdate({ folders: sortBgaFolders(folders), scannedDirectories, done: true });
+    }).catch((error: unknown) => {
+      sendUpdate({ folders: [], scannedDirectories: 0, done: true, error: error instanceof Error ? error.message : String(error) });
+    }).finally(() => {
+      bgaScans.delete(scanId);
+    });
+  });
+
+  return scanId;
+});
+
+ipcMain.handle('bga:scan-cancel', (_event, scanId: string): boolean => {
+  const scan = bgaScans.get(scanId);
+  if (!scan) return false;
+  scan.cancelled = true;
+  bgaScans.delete(scanId);
+  return true;
+});
+
+ipcMain.handle('bga:cleanup-folder', async (_event, directory: string) => {
+  return cleanupBgaFolder(directory, await repository.loadBmsRoots());
 });
 
 ipcMain.handle('table:export', async (_event, payload: ExportPayload): Promise<ExportResult> => {

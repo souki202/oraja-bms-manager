@@ -1,8 +1,8 @@
 import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import type { JSX } from 'react';
 import { useVirtualizer } from '@tanstack/react-virtual';
-import { ArrowDown, ArrowUp, ArrowUpDown, AudioLines, ChevronDown, ChevronRight, Copy, Download, ExternalLink, Filter, FolderOpen, GitBranch, RefreshCw, Search, Settings, Upload, X } from 'lucide-react';
-import type { AudioFolder, ChartImportAnalysis, DirectoryNode, DuplicateChartGroup, ImportCandidate, ManagerState, TableChartRow, TableSummary } from '../shared/types';
+import { ArrowDown, ArrowUp, ArrowUpDown, AudioLines, ChevronDown, ChevronRight, Copy, Download, ExternalLink, Filter, FolderOpen, GitBranch, RefreshCw, Search, Settings, Trash2, Upload, X } from 'lucide-react';
+import type { AudioFolder, BgaFolder, ChartImportAnalysis, DirectoryNode, DuplicateChartGroup, ImportCandidate, ManagerState, TableChartRow, TableSummary } from '../shared/types';
 import type { ChartColumnFilter, ChartColumnFilters, ChartFilterCache, ChartFilterKey, UrlFilterMode } from '../shared/chartFilters';
 import { clearStatuses, countActiveColumnFilters, isColumnFilterActive, matchesChartFilters, normalizeSearchQuery, prepareColumnFilters } from '../shared/chartFilters';
 import { countRedundantChartCopies, findDuplicateChartGroups } from '../shared/duplicateCharts';
@@ -27,7 +27,7 @@ type SortDirection = 'asc' | 'desc';
 type SortState = { key: SortKey; direction: SortDirection };
 type TableColumn = { key: SortKey; label: string; width: number; minWidth: number };
 type FilterMenuState = { key: SortKey; x: number; y: number } | null;
-type ActiveView = 'charts' | 'duplicates' | 'audio';
+type ActiveView = 'charts' | 'duplicates' | 'audio' | 'bga';
 
 const defaultSort: SortState = { key: 'title', direction: 'asc' };
 const editorVersion = String(packageJson.version ?? '');
@@ -128,7 +128,7 @@ export function App(): JSX.Element {
 
   useEffect(() => {
     if (!state) return undefined;
-    if (activeView === 'duplicates') {
+    if (activeView !== 'charts') {
       setFilteredRows([]);
       setIsListLoading(false);
       return undefined;
@@ -207,6 +207,15 @@ export function App(): JSX.Element {
   function selectAudioConversion(): void {
     if (isAudioConversionBusy) return;
     setActiveView('audio');
+    setSelectedBmsRoot(null);
+    setSelectedTableId(null);
+    setSimilarTarget(null);
+    setColumnFilters({});
+  }
+
+  function selectBgaCleanup(): void {
+    if (isAudioConversionBusy) return;
+    setActiveView('bga');
     setSelectedBmsRoot(null);
     setSelectedTableId(null);
     setSimilarTarget(null);
@@ -415,7 +424,7 @@ export function App(): JSX.Element {
         </button>
         <div className="topbar-counts">
           <span>{state.tables.length} tables</span>
-          <span>{activeView === 'duplicates' ? `${duplicateGroups.length} duplicate groups` : activeView === 'audio' ? 'WAV → OGG' : isListLoading ? 'loading...' : `${visibleRows.length} charts`}</span>
+          <span>{activeView === 'duplicates' ? `${duplicateGroups.length} duplicate groups` : activeView === 'audio' ? 'WAV to OGG' : activeView === 'bga' ? 'BGA cleanup' : isListLoading ? 'loading...' : `${visibleRows.length} charts`}</span>
         </div>
       </header>
 
@@ -449,7 +458,11 @@ export function App(): JSX.Element {
             </button>
             <button className={`tree-row duplicate-nav-row ${activeView === 'audio' ? 'selected' : ''}`} disabled={isAudioConversionBusy} onClick={selectAudioConversion}>
               <AudioLines size={14} />
-              <span>WAV → OGG</span>
+              <span>WAV to OGG</span>
+            </button>
+            <button className={`tree-row duplicate-nav-row ${activeView === 'bga' ? 'selected' : ''}`} disabled={isAudioConversionBusy} onClick={selectBgaCleanup}>
+              <Trash2 size={14} />
+              <span>BGA Cleanup</span>
             </button>
             <div className="roots-list">
               {state.bmsRootNodes.map((node) => (
@@ -466,10 +479,10 @@ export function App(): JSX.Element {
         <main className="mainpane">
           <div className="toolbar">
             <div className="title-block">
-              <strong>{activeView === 'duplicates' ? 'Duplicate Charts' : activeView === 'audio' ? 'Audio Conversion' : selectedBmsRoot?.name ?? activeTable?.name ?? 'All Tables'}</strong>
-              <span>{activeView === 'duplicates' ? `${duplicateGroups.length} groups / ${redundantCopyCount} redundant copies` : activeView === 'audio' ? 'Convert WAV files without changing charts' : makeSubtitle(selectedBmsRoot, activeTable, visibleRows.length)}</span>
+              <strong>{activeView === 'duplicates' ? 'Duplicate Charts' : activeView === 'audio' ? 'Audio Conversion' : activeView === 'bga' ? 'BGA Cleanup' : selectedBmsRoot?.name ?? activeTable?.name ?? 'All Tables'}</strong>
+              <span>{activeView === 'duplicates' ? `${duplicateGroups.length} groups / ${redundantCopyCount} redundant copies` : activeView === 'audio' ? 'Convert WAV files without changing charts' : activeView === 'bga' ? 'Remove legacy BGA files when matching MP4 exists' : makeSubtitle(selectedBmsRoot, activeTable, visibleRows.length)}</span>
             </div>
-            {activeView !== 'audio' && <label className="searchbox">
+            {activeView !== 'audio' && activeView !== 'bga' && <label className="searchbox">
               <Search size={16} />
               <input value={searchText} onChange={(event) => void updateSearch(event.target.value)} placeholder={activeView === 'duplicates' ? 'Search title / artist / hash / path' : 'Search title / artist / hash / table'} />
             </label>}
@@ -493,6 +506,8 @@ export function App(): JSX.Element {
               <DuplicateGroupsView groups={visibleDuplicateGroups} totalGroups={duplicateGroups.length} busyGroupId={mergeBusyGroupId} onContextMenu={openContextMenu} onOpenPath={openPathFromMenu} onMerge={(group, targetDirectory, sourceDirectories) => void mergeDuplicateGroup(group, targetDirectory, sourceDirectories)} />
             ) : activeView === 'audio' ? (
               <AudioConversionView onMessage={showToast} onConversionBusyChange={setIsAudioConversionBusy} />
+            ) : activeView === 'bga' ? (
+              <BgaCleanupView onMessage={showToast} onCleanupBusyChange={setIsAudioConversionBusy} />
             ) : (
               <ChartTable rows={visibleRows} sort={sort} columnFilters={columnFilters} onSort={toggleSort} onFilterClick={openFilterMenu} onContextMenu={openContextMenu} />
             )}
@@ -735,6 +750,160 @@ function AudioConversionView({ onMessage, onConversionBusyChange }: { onMessage(
             <button disabled={isBusy} onClick={() => void convertOne(folder)}>{busyPath === folder.path ? <RefreshCw className="spin" size={14} /> : <AudioLines size={14} />}Convert</button>
           </div>
         ))}
+      </div>
+    </div>
+  );
+}
+
+function BgaCleanupView({ onMessage, onCleanupBusyChange }: { onMessage(message: string): void; onCleanupBusyChange(busy: boolean): void }): JSX.Element {
+  const [folders, setFolders] = useState<BgaFolder[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [scannedDirectories, setScannedDirectories] = useState(0);
+  const [busyPath, setBusyPath] = useState('');
+  const [isCleaningAll, setIsCleaningAll] = useState(false);
+  const [isCancelRequested, setIsCancelRequested] = useState(false);
+  const [completed, setCompleted] = useState(0);
+  const [total, setTotal] = useState(0);
+  const scanIdRef = useRef('');
+  const cancelRequestedRef = useRef(false);
+  const folderPathsRef = useRef<Set<string>>(new Set());
+
+  const isBusy = Boolean(busyPath) || isCleaningAll;
+  const duplicateFileCount = folders.reduce((sum, folder) => sum + folder.duplicates.length, 0);
+
+  useEffect(() => {
+    const unsubscribe = window.managerApi.onBgaFolderScanUpdate((update) => {
+      if (update.scanId !== scanIdRef.current) return;
+      if (update.error) {
+        onMessage(update.error);
+        setLoading(false);
+        return;
+      }
+      setScannedDirectories(update.scannedDirectories);
+      if (update.done) {
+        folderPathsRef.current = new Set(update.folders.map((folder) => folder.path));
+        setFolders(update.folders);
+        setLoading(false);
+      }
+    });
+    void reload();
+    return () => {
+      const scanId = scanIdRef.current;
+      if (scanId) void window.managerApi.cancelBgaFolderScan(scanId);
+      onCleanupBusyChange(false);
+      unsubscribe();
+    };
+  }, []);
+
+  useEffect(() => {
+    onCleanupBusyChange(isBusy);
+  }, [isBusy, onCleanupBusyChange]);
+
+  async function reload(): Promise<void> {
+    const previousScanId = scanIdRef.current;
+    if (previousScanId) void window.managerApi.cancelBgaFolderScan(previousScanId);
+    scanIdRef.current = '';
+    folderPathsRef.current = new Set();
+    setFolders([]);
+    setScannedDirectories(0);
+    setLoading(true);
+    try {
+      scanIdRef.current = await window.managerApi.startBgaFolderScan();
+    } catch (error) {
+      onMessage(error instanceof Error ? error.message : String(error));
+      setLoading(false);
+    }
+  }
+
+  async function cleanupOne(folder: BgaFolder, confirmed = false): Promise<boolean> {
+    if (!confirmed && !window.confirm(`Delete legacy BGA files in this folder?\n\n${folder.path}\n\nOnly MPG, MPEG, and WMV files with matching MP4 files will be deleted. Chart files will not be changed.`)) return false;
+    setBusyPath(folder.path);
+    try {
+      const result = await window.managerApi.cleanupBgaFolder(folder.path);
+      onMessage(result.message);
+      if (result.ok) {
+        folderPathsRef.current.delete(folder.path);
+        setFolders((previous) => previous.filter((item) => item.path !== folder.path));
+      }
+      return result.ok;
+    } catch (error) {
+      onMessage(`${folder.name}: ${error instanceof Error ? error.message : String(error)}`);
+      return false;
+    } finally {
+      setBusyPath('');
+    }
+  }
+
+  async function cleanupAll(): Promise<void> {
+    if (!window.confirm(`Delete duplicate legacy BGA files in all ${folders.length} folders?\n\nOnly MPG, MPEG, and WMV files with matching MP4 files will be deleted. Chart files will not be changed.`)) return;
+    const batch = [...folders];
+    cancelRequestedRef.current = false;
+    setIsCancelRequested(false);
+    setIsCleaningAll(true);
+    setTotal(batch.length);
+    setCompleted(0);
+    let succeeded = 0;
+    let attempted = 0;
+    try {
+      for (let index = 0; index < batch.length; index += 1) {
+        if (cancelRequestedRef.current) break;
+        if (await cleanupOne(batch[index], true)) succeeded += 1;
+        attempted = index + 1;
+        setCompleted(attempted);
+      }
+    } finally {
+      const stopped = cancelRequestedRef.current && attempted < batch.length;
+      const needsAttention = attempted - succeeded;
+      setIsCleaningAll(false);
+      setIsCancelRequested(false);
+      cancelRequestedRef.current = false;
+      setTotal(0);
+      await reload();
+      onMessage(stopped
+        ? `${succeeded} / ${batch.length} folders cleaned${needsAttention ? `, ${needsAttention} need attention` : ''}. Stopped after the current folder finished.`
+        : `${succeeded} / ${batch.length} folders cleaned${needsAttention ? `, ${needsAttention} need attention` : ''}.`);
+    }
+  }
+
+  function requestCancelAll(): void {
+    cancelRequestedRef.current = true;
+    setIsCancelRequested(true);
+    onMessage('Stop requested. Cleanup will end after the current folder finishes.');
+  }
+
+  return (
+    <div className="audio-conversion">
+      <div className="audio-actions">
+        <div>
+          <strong>{loading ? 'Scanning BMS paths...' : `${folders.length} folders / ${duplicateFileCount} duplicate BGA files`}</strong>
+          <span>{loading ? `${scannedDirectories.toLocaleString()} directories checked. The list will appear when scanning is complete.` : 'MP4 files and chart definitions are kept; matching legacy BGA files are removed.'}</span>
+        </div>
+        <button onClick={() => void reload()} disabled={isBusy}><RefreshCw size={15} />Rescan</button>
+        {isCleaningAll ? (
+          <button className="stop-conversion-button" onClick={requestCancelAll} disabled={isCancelRequested}><X size={15} />{isCancelRequested ? 'Stopping...' : 'Stop'}</button>
+        ) : (
+          <button className="convert-all-button" onClick={() => void cleanupAll()} disabled={loading || isBusy || folders.length === 0}><Trash2 size={15} />Delete All</button>
+        )}
+      </div>
+      {total > 0 && <div className="audio-progress"><div style={{ width: `${completed / total * 100}%` }} /><span>{isCancelRequested ? `Stopping after current folder... ${completed} / ${total}` : `${completed} / ${total} folders`}</span></div>}
+      <div className="audio-folder-list">
+        {!loading && folders.length === 0 && <div className="duplicate-empty"><Trash2 size={28} /><strong>No duplicate BGA found</strong><span>All scanned BMS folders are already clean.</span></div>}
+        {loading && folders.length === 0 && <div className="duplicate-empty"><RefreshCw className="spin" size={28} /><strong>Scanning BMS folders...</strong><span>The full list will appear after scanning is complete.</span></div>}
+        {folders.map((folder) => {
+          const summary = summarizeBgaDuplicates(folder);
+          return (
+            <div className="audio-folder-row bga-folder-row" key={folder.path}>
+              <FolderOpen size={17} />
+              <div>
+                <strong>{folder.name}</strong>
+                <span title={folder.path}>{folder.path}</span>
+                <span title={summary}>{summary}</span>
+              </div>
+              <b>{folder.duplicates.length} files</b>
+              <button disabled={isBusy} onClick={() => void cleanupOne(folder)}>{busyPath === folder.path ? <RefreshCw className="spin" size={14} /> : <Trash2 size={14} />}Delete</button>
+            </div>
+          );
+        })}
       </div>
     </div>
   );
@@ -1010,6 +1179,11 @@ function ImportCandidateRow({ candidate, selected, disabled, onSelect }: { candi
 
 function currentViewport(): { width: number; height: number } {
   return { width: window.innerWidth, height: window.innerHeight };
+}
+
+function summarizeBgaDuplicates(folder: BgaFolder): string {
+  const names = folder.duplicates.slice(0, 4).map((item) => `${item.legacyFileName} -> ${item.mp4FileName}`);
+  return `${names.join(', ')}${folder.duplicates.length > names.length ? ', ...' : ''}`;
 }
 
 function ChartTable({ rows, compact = false, sort, columnFilters, onSort, onFilterClick, onContextMenu }: { rows: TableChartRow[]; compact?: boolean; sort: SortState; columnFilters: ChartColumnFilters; onSort(key: SortKey): void; onFilterClick(event: React.MouseEvent, key: SortKey): void; onContextMenu(event: React.MouseEvent, row: TableChartRow): void }): JSX.Element {

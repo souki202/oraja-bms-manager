@@ -123,6 +123,7 @@ button, input, select { font: inherit; }
 .audio-progress span { position: absolute; inset: 0; display: grid; place-items: center; color: #243547; font-size: 12px; font-weight: 700; }
 .audio-folder-list { min-height: 0; flex: 1; overflow: auto; padding: 8px; }
 .audio-folder-row { min-height: 54px; display: grid; grid-template-columns: 22px minmax(0, 1fr) 82px 90px; align-items: center; gap: 8px; margin-bottom: 5px; padding: 7px 9px; border: 1px solid #cbd4dd; background: #fff; }
+.audio-folder-row.bga-folder-row { min-height: 68px; }
 .audio-folder-row > div { min-width: 0; display: flex; flex-direction: column; gap: 2px; }
 .audio-folder-row strong, .audio-folder-row span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .audio-folder-row span { color: #6b7888; font-size: 12px; }

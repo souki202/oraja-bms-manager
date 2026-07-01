@@ -1,5 +1,5 @@
 import { contextBridge, ipcRenderer, webUtils } from 'electron';
-import type { AppSettings, AudioConversionResult, AudioFolder, AudioFolderScanUpdate, BokutachiResolvePayload, ChartImportAnalysis, ChartImportPayload, ChartImportResult, DirectoryNode, DuplicateDirectoryMergePayload, DuplicateDirectoryMergeResult, ExportPayload, ExportResult, ManagerState, OpenPathPayload } from '../shared/types';
+import type { AppSettings, AudioConversionResult, AudioFolder, AudioFolderScanUpdate, BgaCleanupResult, BgaFolder, BgaFolderScanUpdate, BokutachiResolvePayload, ChartImportAnalysis, ChartImportPayload, ChartImportResult, DirectoryNode, DuplicateDirectoryMergePayload, DuplicateDirectoryMergeResult, ExportPayload, ExportResult, ManagerState, OpenPathPayload } from '../shared/types';
 
 contextBridge.exposeInMainWorld('managerApi', {
   loadState: (): Promise<ManagerState> => ipcRenderer.invoke('state:load'),
@@ -15,6 +15,15 @@ contextBridge.exposeInMainWorld('managerApi', {
     return () => ipcRenderer.off('audio:scan-update', wrapped);
   },
   convertAudioFolder: (directory: string): Promise<AudioConversionResult> => ipcRenderer.invoke('audio:convert-folder', directory),
+  listBgaFolders: (): Promise<BgaFolder[]> => ipcRenderer.invoke('bga:list-folders'),
+  startBgaFolderScan: (): Promise<string> => ipcRenderer.invoke('bga:scan-start'),
+  cancelBgaFolderScan: (scanId: string): Promise<boolean> => ipcRenderer.invoke('bga:scan-cancel', scanId),
+  onBgaFolderScanUpdate: (listener: (update: BgaFolderScanUpdate) => void): (() => void) => {
+    const wrapped = (_event: Electron.IpcRendererEvent, update: BgaFolderScanUpdate): void => listener(update);
+    ipcRenderer.on('bga:scan-update', wrapped);
+    return () => ipcRenderer.off('bga:scan-update', wrapped);
+  },
+  cleanupBgaFolder: (directory: string): Promise<BgaCleanupResult> => ipcRenderer.invoke('bga:cleanup-folder', directory),
   exportTable: (payload: ExportPayload): Promise<ExportResult> => ipcRenderer.invoke('table:export', payload),
   getPathForFile: (file: File): string => webUtils.getPathForFile(file),
   analyzeDroppedChart: (paths: string[]): Promise<ChartImportAnalysis> => ipcRenderer.invoke('chart-import:analyze', paths),
