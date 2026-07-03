@@ -18,6 +18,10 @@ beatoraja Chart Manager は、beatoraja に入っている段位表・難易度�
 - BMS フォルダ単位で、手元にある譜面を一覧表示
 - 譜面の配布 URL、IR ページ、保存先フォルダを右クリックメニューから開く
 - 同じ曲や差分らしい譜面を探す Same Song Search
+- 重複譜面を検索し、重複しているフォルダをまとめる Duplicate Charts
+- BMS 譜面ファイルをドラッグ＆ドロップして差分譜面を取り込み
+- BMS フォルダ内の WAV ファイルを OGG ファイルへ変換
+- 同じフォルダに MP4 と旧形式 BGA（MPG、MPEG、WMV など）がある場合、旧形式 BGA を削除
 - 選択中の表を header.json / data.json として書き出し
 
 ## 配布版の起動

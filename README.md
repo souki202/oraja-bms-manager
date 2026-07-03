@@ -20,6 +20,10 @@ Download the latest release from the [Releases page](https://github.com/souki202
 - Browses locally available charts by BMS folder
 - Opens chart distribution URLs, IR pages, and local folders from the context menu
 - Same Song Search for finding charts that appear to be the same song or related variations
+- Duplicate Charts view for finding duplicate chart files and merging their folders
+- Imports BMS chart variations by dragging and dropping chart files into the app
+- Converts WAV files in BMS folders to OGG files
+- Deletes legacy BGA files such as MPG, MPEG, and WMV when a matching MP4 exists in the same folder
 - Exports the selected table as `header.json` / `data.json`
 
 ## Running the Release Build
