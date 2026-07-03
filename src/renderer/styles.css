@@ -377,9 +377,12 @@ button, input, select { font: inherit; }
 .chart-table .virtual-spacer td { height: auto; padding: 0; border: 0; }
 .chart-table tbody tr:nth-child(even) { background: #f7f9fb; }
 .chart-table tbody tr:hover { background: #dbeafe; }
-.chart-table tbody tr.no-song-row { background: #fff4e5; color: #5f4020; }
-.chart-table tbody tr.no-song-row:nth-child(even) { background: #ffeccf; }
-.chart-table tbody tr.no-song-row:hover { background: #ffdfa8; }
+.chart-table tbody tr.no-song-row { color: #5f4020; --no-song-hover-bg: #ffdfa8; }
+.chart-table tbody tr.no-song-row.no-song-url-none { background: #eed0a8; --no-song-hover-bg: #e8c28a; }
+.chart-table tbody tr.no-song-row.no-song-url-1 { background: #f5dcba; --no-song-hover-bg: #efcc97; }
+.chart-table tbody tr.no-song-row.no-song-url-2 { background: #fae7cd; --no-song-hover-bg: #f3d5a7; }
+.chart-table tbody tr.no-song-row.no-song-url-both { background: #fff7e8; --no-song-hover-bg: #ffe3b1; }
+.chart-table tbody tr.no-song-row:hover { background: var(--no-song-hover-bg); }
 .chart-table tbody tr.no-song-row td:first-child { box-shadow: inset 4px 0 0 #d6842c; }
 .chart-table th:nth-child(5), .chart-table td:nth-child(5),
 .chart-table th:nth-child(6), .chart-table td:nth-child(6) { text-align: center; }

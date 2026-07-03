@@ -1251,7 +1251,7 @@ function ChartTable({ rows, compact = false, sort, columnFilters, onSort, onFilt
           {virtualRows.map((virtualRow) => {
             const row = rows[virtualRow.index];
             return (
-              <tr key={virtualRow.key} className={row.status === 'NO SONG' ? 'no-song-row' : ''} onContextMenu={(event) => onContextMenu(event, row)}>
+              <tr key={virtualRow.key} className={chartRowClass(row)} onContextMenu={(event) => onContextMenu(event, row)}>
                 <td className="folder-cell" title={row.level}>{row.level}</td>
                 <td>{row.songLevel ?? row.difficulty ?? ''}</td>
                 <td className="title-cell" title={`${row.title} ${row.subtitle}`}>{row.title}<span>{row.subtitle}</span></td>
@@ -1270,6 +1270,16 @@ function ChartTable({ rows, compact = false, sort, columnFilters, onSort, onFilt
       </table>
     </div>
   );
+}
+
+function chartRowClass(row: TableChartRow): string {
+  if (row.status !== 'NO SONG') return '';
+  const hasUrl1 = Boolean(row.url1.trim());
+  const hasUrl2 = Boolean(row.url2.trim());
+  if (!hasUrl1 && !hasUrl2) return 'no-song-row no-song-url-none';
+  if (hasUrl1 && !hasUrl2) return 'no-song-row no-song-url-1';
+  if (!hasUrl1 && hasUrl2) return 'no-song-row no-song-url-2';
+  return 'no-song-row no-song-url-both';
 }
 
 function ColumnFilterMenu({ column, filter, x, y, onChange, onClear }: { column: TableColumn; filter: ChartColumnFilter; x: number; y: number; onChange(patch: ChartColumnFilter): void; onClear(): void }): JSX.Element {

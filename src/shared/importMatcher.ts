@@ -7,6 +7,11 @@ interface ScoredRow {
   reason: string;
 }
 
+interface TitleEvidence {
+  score: number;
+  reason: string;
+}
+
 export interface ImportMatcher {
   rank(dropped: DroppedChartMetadata): ImportCandidate[];
 }
@@ -206,24 +211,24 @@ function scoreRow(dropped: PreparedDroppedChart, row: PreparedLibraryRow): Score
   if (dropped.full && dropped.full === row.full) {
     score += 92;
     reasons.push('exact title');
-  } else if (isPrefixTitleMatch(dropped.fullKey, row.fullKey)) {
-    score += 62;
-    reasons.push('title prefix');
   }
 
   if (shouldCheckBaseTitle(dropped.baseKey, row.baseKey)) {
     if (dropped.base && dropped.base === row.base) {
       score += 68;
       reasons.push('same base title');
-    } else if (isPrefixTitleMatch(dropped.baseKey, row.baseKey)) {
-      score += 48;
-      reasons.push('base title prefix');
-    } else if (shouldCheckSimilarity(dropped.baseKey, row.baseKey)) {
-      const similarity = titleSimilarity(dropped, row.base);
-      if (similarity >= 0.72) {
-        score += Math.round(similarity * 58);
-        reasons.push('similar title');
+    } else {
+      const partialTitle = bestPartialTitleEvidence(dropped, row);
+      if (partialTitle) {
+        score += partialTitle.score;
+        reasons.push(partialTitle.reason);
       }
+    }
+  } else {
+    const partialTitle = bestPartialTitleEvidence(dropped, row);
+    if (partialTitle) {
+      score += partialTitle.score;
+      reasons.push(partialTitle.reason);
     }
   }
 
@@ -231,6 +236,9 @@ function scoreRow(dropped: PreparedDroppedChart, row: PreparedLibraryRow): Score
     if (dropped.artist === row.artist) {
       score += 18;
       reasons.push('same artist');
+    } else if (isPrefixArtistMatch(dropped.artist, row.artist)) {
+      score += 16;
+      reasons.push('artist prefix');
     } else if (isMeaningfulContainment(dropped.artist, row.artist)) {
       score += 10;
       reasons.push('similar artist');
@@ -310,6 +318,54 @@ function isPrefixTitleMatch(aKey: string, bKey: string): boolean {
   const longer = aKey.length <= bKey.length ? bKey : aKey;
   if (shorter.length <= 2) return longer.startsWith(shorter) && longer.length <= shorter.length + 5;
   return longer.startsWith(shorter);
+}
+
+function titlePrefixScore(aText: string, bText: string, aKey: string, bKey: string, maxScore: number): number {
+  if (!isPrefixTitleMatch(aKey, bKey)) return 0;
+
+  const shorterKey = aKey.length <= bKey.length ? aKey : bKey;
+  const longerKey = aKey.length <= bKey.length ? bKey : aKey;
+  const shorterText = aKey.length <= bKey.length ? aText : bText;
+  const longerText = aKey.length <= bKey.length ? bText : aText;
+  const coverage = shorterKey.length / longerKey.length;
+
+  if (isTextPrefixMatch(shorterText, longerText)) {
+    return Math.round(maxScore * (0.78 + 0.22 * coverage));
+  }
+
+  return Math.round(maxScore * (0.35 + 0.35 * coverage));
+}
+
+function bestPartialTitleEvidence(dropped: PreparedDroppedChart, row: PreparedLibraryRow): TitleEvidence | null {
+  const evidence: TitleEvidence[] = [];
+  const fullPrefixScore = titlePrefixScore(dropped.full, row.full, dropped.fullKey, row.fullKey, 62);
+  if (fullPrefixScore > 0) evidence.push({ score: fullPrefixScore, reason: 'title prefix' });
+
+  const basePrefixScore = titlePrefixScore(dropped.base, row.base, dropped.baseKey, row.baseKey, 48);
+  if (basePrefixScore > 0) evidence.push({ score: basePrefixScore, reason: 'base title prefix' });
+
+  if (shouldCheckSimilarity(dropped.baseKey, row.baseKey)) {
+    const similarity = titleSimilarity(dropped, row.base);
+    if (similarity >= 0.72) evidence.push({ score: Math.round(similarity * 58), reason: 'similar title' });
+  }
+
+  if (evidence.length === 0) return null;
+  return evidence.sort((a, b) => b.score - a.score)[0];
+}
+
+function isTextPrefixMatch(shorter: string, longer: string): boolean {
+  if (!shorter || !longer || shorter === longer || !longer.startsWith(shorter)) return false;
+  const next = longer[shorter.length];
+  return next == null || /\s/.test(next);
+}
+
+function isPrefixArtistMatch(aKey: string, bKey: string): boolean {
+  if (!aKey || !bKey || aKey === bKey) return false;
+  const shorter = aKey.length <= bKey.length ? aKey : bKey;
+  const longer = aKey.length <= bKey.length ? bKey : aKey;
+  if (shorter.length < 3 || !longer.startsWith(shorter)) return false;
+  const next = longer[shorter.length];
+  return next == null || /\s/.test(next) || /[:/([{-]/.test(next);
 }
 
 function isMeaningfulContainment(aKey: string, bKey: string): boolean {

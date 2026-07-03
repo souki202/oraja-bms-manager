@@ -59,6 +59,49 @@ describe('rankImportCandidates', () => {
     expect(rankImportCandidates(oneLetter, rows)[0].destinationDirectory).toBe('F:\\BMS\\K');
     expect(rankImportCandidates(twoLetters, rows)[0].destinationDirectory).toBe('F:\\BMS\\AA');
   });
+
+  it('prefers a title and artist prefix match over a shorter compact-title coincidence', () => {
+    const dropped = chart('F:\\Downloads\\Maxi [+65536% Citric Acid].bme', 'Maxi [+65536% Citric Acid]', 'Nizikawa');
+    const rows = [
+      row('ma-x', 'M-A(X)', 'Nizikawa', 'F:\\BMS\\Musical Masterpiece\\m-a-x.bms'),
+      row('ma-another', 'M-A(ANOTHER)', 'Nizikawa', 'F:\\BMS\\Musical Masterpiece\\m-a-a.bms'),
+      row('maxi-another', 'Maxi [ANOTHER]', 'Nizikawa obj:aaa', 'F:\\BMS\\BOFU2016\\Maxi\\maxi_a.bms'),
+      row('maxi-heaven', 'Maxi -Heaven-', 'Nizikawa obj:aaa', 'F:\\BMS\\BOFU2016\\Maxi\\maxi_h.bms')
+    ];
+
+    const candidates = rankImportCandidates(dropped, rows);
+
+    expect(candidates[0].destinationDirectory).toBe('F:\\BMS\\BOFU2016\\Maxi');
+    expect(candidates[0].matchReason).toContain('artist prefix');
+  });
+
+  it('adds confidence for artist prefixes created by diff author suffixes', () => {
+    const dropped = chart('F:\\Downloads\\Song [DIFF].bms', 'Song [DIFF]', 'Artist');
+    const rows = [
+      row('artist-prefix', 'Song [ANOTHER]', 'Artist obj:aaa', 'F:\\BMS\\Song\\another.bms')
+    ];
+
+    const candidates = rankImportCandidates(dropped, rows);
+
+    expect(candidates[0].matchReason).toContain('artist prefix');
+    expect(candidates[0].confidence).toBeGreaterThan(0.5);
+  });
+
+  it('does not double-count full and base prefix matches for shorter song titles', () => {
+    const dropped = chart('F:\\Downloads\\MirageImitation.bms', 'Mirage Imitation [To the Aerosphere]', 'Artist');
+    const rows = [
+      row('mirage', 'Mirage', 'Artist', 'F:\\BMS\\Mirage\\mirage.bms'),
+      row('mirage-imitation-h', 'Mirage Imitation [SP Hyper]', 'Artist', 'F:\\BMS\\MirageImitation\\hyper.bms'),
+      row('mirage-imitation-a', 'Mirage Imitation [SP Another]', 'Artist', 'F:\\BMS\\MirageImitation\\another.bms')
+    ];
+
+    const candidates = rankImportCandidates(dropped, rows);
+    const shorterTitleCandidate = candidates.find((candidate) => candidate.destinationDirectory === 'F:\\BMS\\Mirage');
+
+    expect(candidates[0].destinationDirectory).toBe('F:\\BMS\\MirageImitation');
+    expect(candidates[0].matchReason).toContain('same base title');
+    expect(shorterTitleCandidate?.matchReason).toBe('title prefix + same artist');
+  });
 });
 
 function chart(sourcePath: string, title: string, artist: string): DroppedChartMetadata {
