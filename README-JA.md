@@ -4,6 +4,10 @@ beatoraja Chart Manager は、beatoraja に入っている段位表・難易度�
 
 ![beatoraja Chart Manager の画面例](assets/sample.png)
 
+## ダウンロード
+
+最新版は [Releases ページ](https://github.com/souki202/oraja-bms-manager/releases) からダウンロードできます。
+
 ## 主な機能
 
 - beatoraja の table フォルダに入っている難易度表を一覧表示

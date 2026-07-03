@@ -6,6 +6,10 @@ beatoraja Chart Manager is a Windows app for viewing the grade and difficulty ta
 
 ![beatoraja Chart Manager screenshot](assets/sample.png)
 
+## Download
+
+Download the latest release from the [Releases page](https://github.com/souki202/oraja-bms-manager/releases).
+
 ## Features
 
 - Lists difficulty tables found in beatoraja's `table` folder
