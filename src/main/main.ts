@@ -160,13 +160,14 @@ ipcMain.handle('bga:cleanup-folder', async (_event, directory: string) => {
 
 ipcMain.handle('missing-audio:scan-start', async (event): Promise<string> => {
   const roots = await repository.loadBmsRoots();
+  const registeredCharts = (await repository.loadState()).libraryRows.map((chart) => ({ path: chart.path, notes: chart.notes }));
   const scanId = randomUUID();
   const scan = { cancelled: false };
   missingAudioScans.set(scanId, scan);
   const send = (update: Omit<MissingAudioScanUpdate, 'scanId'>): void => {
     if (!event.sender.isDestroyed()) event.sender.send('missing-audio:scan-update', { scanId, ...update } satisfies MissingAudioScanUpdate);
   };
-  setImmediate(() => void scanMissingAudio(roots, {
+  setImmediate(() => void scanMissingAudio(roots, registeredCharts, {
     isCancelled: () => scan.cancelled || event.sender.isDestroyed(),
     onProgress: (progress) => send({ ...progress, done: false })
   }).then((result) => {

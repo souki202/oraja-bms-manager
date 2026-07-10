@@ -7,42 +7,57 @@ const chartExtensions = new Set(['.bms', '.bme', '.bml', '.pms', '.bmson']);
 const audioExtensions = new Set(['.wav', '.ogg', '.mp3', '.flac', '.opus', '.m4a', '.aac']);
 const concurrency = 8;
 
+export interface RegisteredChart {
+  path: string;
+  notes: number | null;
+}
+
 export interface MissingAudioProgress {
   charts: MissingAudioChart[];
   scannedDirectories: number;
   scannedCharts: number;
 }
 
-export async function scanMissingAudio(roots: string[], options: {
+export async function scanMissingAudio(roots: string[], registeredCharts: RegisteredChart[], options: {
   isCancelled?(): boolean;
   onProgress?(progress: MissingAudioProgress): void;
 } = {}): Promise<MissingAudioProgress> {
-  let currentLevel = roots.map((root) => path.resolve(root));
   const results: MissingAudioChart[] = [];
   let scannedDirectories = 0;
   let scannedCharts = 0;
+  const rootPaths = roots.map((root) => path.resolve(root));
+  const chartsByDirectory = new Map<string, string[]>();
+  for (const chart of registeredCharts) {
+    if ((chart.notes != null && chart.notes <= 1) || !chart.path) continue;
+    const chartPath = path.resolve(chart.path);
+    if (!rootPaths.some((root) => isWithin(chartPath, root))) continue;
+    if (!chartExtensions.has(path.extname(chartPath).toLowerCase())) continue;
+    const directory = path.dirname(chartPath);
+    const charts = chartsByDirectory.get(directory) ?? [];
+    charts.push(chartPath);
+    chartsByDirectory.set(directory, charts);
+  }
+  const directories = [...chartsByDirectory.keys()];
 
-  while (currentLevel.length && !options.isCancelled?.()) {
-    const nextLevel: string[] = [];
+  for (let offset = 0; offset < directories.length && !options.isCancelled?.(); offset += concurrency) {
+    const batch = directories.slice(offset, offset + concurrency);
     let next = 0;
     const worker = async (): Promise<void> => {
       while (!options.isCancelled?.()) {
-        const directory = currentLevel[next++];
+        const directory = batch[next++];
         if (!directory) return;
-      let entries: Dirent[];
-      try { entries = await fs.readdir(directory, { withFileTypes: true }); } catch { continue; }
-      scannedDirectories++;
-      for (const entry of entries) if (entry.isDirectory()) nextLevel.push(path.join(directory, entry.name));
-      const fileNames = new Set(entries.filter((entry) => entry.isFile()).map((entry) => entry.name.toLocaleLowerCase()));
-      const chartEntries = entries.filter((entry) => entry.isFile() && chartExtensions.has(path.extname(entry.name).toLowerCase()));
-      const found = (await Promise.all(chartEntries.map((entry) => inspectChart(path.join(directory, entry.name), fileNames)))).filter((item): item is MissingAudioChart => item !== null);
-      scannedCharts += chartEntries.length;
-      results.push(...found);
-      if (found.length || scannedDirectories % 25 === 0) options.onProgress?.({ charts: found, scannedDirectories, scannedCharts });
+        let entries: Dirent[];
+        try { entries = await fs.readdir(directory, { withFileTypes: true }); } catch { continue; }
+        scannedDirectories++;
+        const fileIndex = new DirectoryFileIndex(directory, entries);
+        const chartPaths = chartsByDirectory.get(directory) ?? [];
+        const found = (await Promise.all(chartPaths.map((chartPath) => inspectChart(chartPath, fileIndex)))).filter((item): item is MissingAudioChart => item !== null);
+        scannedCharts += chartPaths.length;
+        results.push(...found);
+        if (found.length || scannedDirectories % 25 === 0) options.onProgress?.({ charts: found, scannedDirectories, scannedCharts });
       }
     };
-    await Promise.all(Array.from({ length: Math.min(concurrency, currentLevel.length) }, worker));
-    currentLevel = nextLevel;
+    await Promise.all(Array.from({ length: batch.length }, worker));
   }
   return { charts: sortMissingAudioCharts(results), scannedDirectories, scannedCharts };
 }
@@ -55,7 +70,7 @@ export function sortMissingAudioCharts(charts: MissingAudioChart[]): MissingAudi
   );
 }
 
-async function inspectChart(chartPath: string, files: Set<string>): Promise<MissingAudioChart | null> {
+async function inspectChart(chartPath: string, files: DirectoryFileIndex): Promise<MissingAudioChart | null> {
   const extension = path.extname(chartPath).toLowerCase();
   if (/_(?:tmp|temp)/i.test(path.basename(chartPath, extension))) return null;
   let text: string;
@@ -66,14 +81,12 @@ async function inspectChart(chartPath: string, files: Set<string>): Promise<Miss
   let title = path.basename(chartPath, extension);
   let artist = '';
   let definitions: string[] = [];
-  let noteCount = 0;
   if (extension === '.bmson') {
     try {
-      const json = JSON.parse(text) as { info?: { title?: string; artist?: string }; sound_channels?: Array<{ name?: string; notes?: unknown[] }> };
+      const json = JSON.parse(text) as { info?: { title?: string; artist?: string }; sound_channels?: Array<{ name?: string }> };
       title = String(json.info?.title || title);
       artist = String(json.info?.artist || '');
       definitions = (json.sound_channels ?? []).map((channel) => String(channel.name ?? '').trim()).filter(Boolean);
-      noteCount = (json.sound_channels ?? []).reduce((count, channel) => count + (Array.isArray(channel.notes) ? channel.notes.length : 0), 0);
     } catch { return null; }
   } else {
     const map = new Map<string, string>();
@@ -83,34 +96,57 @@ async function inspectChart(chartPath: string, files: Set<string>): Promise<Miss
       if (wav) map.set(wav[1].toUpperCase(), stripQuotes(wav[2].trim()));
       else if (/^#TITLE\s/i.test(line)) title = line.replace(/^#TITLE\s+/i, '').trim();
       else if (/^#ARTIST\s/i.test(line)) artist = line.replace(/^#ARTIST\s+/i, '').trim();
-      const sequence = line.match(/^#[0-9]{3}(?:1[1-9]|2[1-9]|5[1-9]|6[1-9]):([0-9A-Z]+)$/i);
-      if (sequence) noteCount += countNonZeroObjects(sequence[1]);
     }
     definitions = [...map.values()];
   }
-  if (noteCount <= 1) return null;
   definitions = [...new Set(definitions.map((name) => name.replace(/\\/g, '/').toLocaleLowerCase()))];
   if (!definitions.length) return null;
-  const missing = definitions.filter((name) => !hasAudioFile(name, files));
+  const existence = await Promise.all(definitions.map((name) => files.hasAudioFile(name)));
+  const missing = definitions.filter((_name, index) => !existence[index]);
   if (!missing.length) return null;
   return { path: chartPath, folder: path.dirname(chartPath), fileName: path.basename(chartPath), title, artist, definedCount: definitions.length, existingCount: definitions.length - missing.length, missingCount: missing.length, missingFiles: missing };
 }
 
-function hasAudioFile(name: string, files: Set<string>): boolean {
-  if (files.has(name)) return true;
-  const extension = path.extname(name);
-  if (!audioExtensions.has(extension)) return false;
-  const stem = name.slice(0, -extension.length);
-  for (const alternative of audioExtensions) if (files.has(`${stem}${alternative}`)) return true;
-  return false;
+class DirectoryFileIndex {
+  private readonly cache = new Map<string, Promise<Set<string>>>();
+
+  constructor(private readonly root: string, rootEntries: Dirent[]) {
+    this.cache.set('', Promise.resolve(fileNameSet(rootEntries)));
+  }
+
+  async hasAudioFile(relativeName: string): Promise<boolean> {
+    const normalized = path.posix.normalize(relativeName.replace(/\\/g, '/'));
+    if (normalized === '..' || normalized.startsWith('../') || path.posix.isAbsolute(normalized)) return false;
+    const directory = path.posix.dirname(normalized) === '.' ? '' : path.posix.dirname(normalized);
+    const name = path.posix.basename(normalized).toLocaleLowerCase();
+    const files = await this.filesIn(directory);
+    if (files.has(name)) return true;
+    const extension = path.extname(name);
+    if (!audioExtensions.has(extension)) return false;
+    const stem = name.slice(0, -extension.length);
+    for (const alternative of audioExtensions) if (files.has(`${stem}${alternative}`)) return true;
+    return false;
+  }
+
+  private filesIn(relativeDirectory: string): Promise<Set<string>> {
+    let cached = this.cache.get(relativeDirectory);
+    if (!cached) {
+      cached = fs.readdir(path.join(this.root, ...relativeDirectory.split('/')), { withFileTypes: true })
+        .then(fileNameSet)
+        .catch(() => new Set<string>());
+      this.cache.set(relativeDirectory, cached);
+    }
+    return cached;
+  }
+}
+
+function fileNameSet(entries: Dirent[]): Set<string> {
+  return new Set(entries.filter((entry) => entry.isFile()).map((entry) => entry.name.toLocaleLowerCase()));
 }
 
 function stripQuotes(value: string): string { return value.replace(/^(?:"(.*)"|'(.*)')$/, '$1$2'); }
 
-function countNonZeroObjects(sequence: string): number {
-  let count = 0;
-  for (let index = 0; index + 1 < sequence.length; index += 2) {
-    if (sequence[index] !== '0' || sequence[index + 1] !== '0') count++;
-  }
-  return count;
+function isWithin(candidate: string, root: string): boolean {
+  const relative = path.relative(root, candidate);
+  return relative === '' || (!relative.startsWith('..') && !path.isAbsolute(relative));
 }

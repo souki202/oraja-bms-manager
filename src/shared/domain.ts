@@ -39,6 +39,7 @@ export function rowMatchesSearch(row: TableChartRow, query: string): boolean {
     row.title,
     row.subtitle,
     row.artist,
+    row.subartist,
     row.genre,
     row.md5,
     row.sha256,

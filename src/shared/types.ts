@@ -51,6 +51,7 @@ export interface TableChartRow {
   title: string;
   subtitle: string;
   artist: string;
+  subartist?: string;
   genre: string;
   md5: string;
   sha256: string;

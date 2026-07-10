@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { matchesChartFilters, normalizeSearchQuery, prepareColumnFilters } from '../src/shared/chartFilters';
+import { matchesChartFilters, matchesGlobalChartSearch, normalizeSearchQuery, prepareColumnFilters } from '../src/shared/chartFilters';
 import type { ChartFilterCache } from '../src/shared/chartFilters';
 import type { TableChartRow } from '../src/shared/types';
 
@@ -33,6 +33,19 @@ describe('chart filters', () => {
 
     expect(rows.filter((item) => matchesChartFilters(item, query, filters, cache)).map((item) => item.id)).toEqual(['a']);
   });
+
+  it('searches global chart metadata by partial match', () => {
+    const rows = [
+      row({ id: 'title', title: 'Blue Moment' }),
+      row({ id: 'subtitle', subtitle: 'Scarlet Mix' }),
+      row({ id: 'artist', artist: 'Lime' }),
+      row({ id: 'subartist', subartist: 'obj:Alice' }),
+      row({ id: 'path', path: 'F:\\songs\\scarlet.bms' })
+    ];
+
+    expect(rows.filter((item) => matchesGlobalChartSearch(item, normalizeSearchQuery('scarlet'))).map((item) => item.id)).toEqual(['subtitle']);
+    expect(rows.filter((item) => matchesGlobalChartSearch(item, normalizeSearchQuery('alice'))).map((item) => item.id)).toEqual(['subartist']);
+  });
 });
 
 function row(patch: Partial<TableChartRow>): TableChartRow {
@@ -43,8 +56,9 @@ function row(patch: Partial<TableChartRow>): TableChartRow {
     tableUrl: '',
     level: patch.level ?? '★1',
     title: patch.title ?? 'Title',
-    subtitle: '',
+    subtitle: patch.subtitle ?? '',
     artist: patch.artist ?? 'Artist',
+    subartist: patch.subartist ?? '',
     genre: '',
     md5: '',
     sha256: patch.sha256 ?? patch.id ?? 'sha',

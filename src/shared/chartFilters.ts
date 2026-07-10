@@ -89,6 +89,12 @@ export function normalizeSearchQuery(query: string): string {
   return normalizeText(query);
 }
 
+export function matchesGlobalChartSearch(row: TableChartRow, normalizedQuery: string): boolean {
+  if (!normalizedQuery) return true;
+  return [row.title, row.subtitle, row.artist, row.subartist ?? '']
+    .some((value) => normalizeText(value).includes(normalizedQuery));
+}
+
 interface CachedChartFilterValues {
   search: string;
   level: string;
@@ -144,6 +150,7 @@ function cachedValues(row: TableChartRow, cache: ChartFilterCache): CachedChartF
       row.title,
       row.subtitle,
       row.artist,
+      row.subartist,
       row.genre,
       row.md5,
       row.sha256,
@@ -153,7 +160,7 @@ function cachedValues(row: TableChartRow, cache: ChartFilterCache): CachedChartF
     ].join(' ')),
     level: normalizeText(row.level),
     title: normalizeText(`${row.title} ${row.subtitle}`),
-    artist: normalizeText(`${row.artist} ${row.genre}`),
+    artist: normalizeText(`${row.artist} ${row.subartist ?? ''} ${row.genre}`),
     url1: normalizeText(row.url1),
     url2: normalizeText(row.url2),
     tableName: normalizeText(row.tableName),

@@ -10,9 +10,22 @@ describe('missing audio scan', () => {
     try {
       await fs.writeFile(path.join(root, 'present.ogg'), 'audio');
       await fs.writeFile(path.join(root, 'chart.bms'), '#TITLE Test\r\n#ARTIST Artist\r\n#WAV01 present.wav\r\n#WAV02 absent.wav\r\n#00111:0102\r\n');
-      const result = await scanMissingAudio([root]);
+      const result = await scanMissingAudio([root], [{ path: path.join(root, 'chart.bms'), notes: 2 }]);
       expect(result.scannedCharts).toBe(1);
       expect(result.charts).toMatchObject([{ title: 'Test', artist: 'Artist', definedCount: 2, existingCount: 1, missingCount: 1, missingFiles: ['absent.wav'] }]);
+    } finally { await fs.rm(root, { recursive: true, force: true }); }
+  });
+
+  it('resolves audio definitions in relative subdirectories', async () => {
+    const root = await fs.mkdtemp(path.join(os.tmpdir(), 'missing-audio-'));
+    try {
+      await fs.mkdir(path.join(root, 'ogg'));
+      await fs.writeFile(path.join(root, 'ogg', 'bass_0032.ogg'), 'audio');
+      await fs.writeFile(path.join(root, 'chart.bme'), '#WAV0Z ogg\\bass_0032.wav\r\n#00111:0Z0Z\r\n');
+
+      const result = await scanMissingAudio([root], [{ path: path.join(root, 'chart.bme'), notes: 2 }]);
+
+      expect(result.charts).toEqual([]);
     } finally { await fs.rm(root, { recursive: true, force: true }); }
   });
 
@@ -21,7 +34,7 @@ describe('missing audio scan', () => {
     try {
       await fs.writeFile(path.join(root, '音.ogg'), 'audio');
       await fs.writeFile(path.join(root, 'chart.bmson'), JSON.stringify({ info: { title: '日本語' }, sound_channels: [{ name: '音.ogg' }] }));
-      const result = await scanMissingAudio([root]);
+      const result = await scanMissingAudio([root], [{ path: path.join(root, 'chart.bmson'), notes: 2 }]);
       expect(result.scannedCharts).toBe(1);
       expect(result.charts).toEqual([]);
     } finally { await fs.rm(root, { recursive: true, force: true }); }
@@ -54,9 +67,15 @@ describe('missing audio scan', () => {
       await fs.writeFile(path.join(root, 'chart_temp.bms'), `${header}#00111:0101\r\n`);
       await fs.writeFile(path.join(root, 'normal.bms'), `${header}#00111:0101\r\n`);
 
-      const result = await scanMissingAudio([root]);
+      const result = await scanMissingAudio([root], [
+        { path: path.join(root, 'zero.bms'), notes: 0 },
+        { path: path.join(root, 'one.bms'), notes: 1 },
+        { path: path.join(root, 'chart_tmp.bms'), notes: 2 },
+        { path: path.join(root, 'chart_temp.bms'), notes: 2 },
+        { path: path.join(root, 'normal.bms'), notes: 2 }
+      ]);
 
-      expect(result.scannedCharts).toBe(5);
+      expect(result.scannedCharts).toBe(3);
       expect(result.charts.map((chart) => chart.fileName)).toEqual(['normal.bms']);
     } finally { await fs.rm(root, { recursive: true, force: true }); }
   });

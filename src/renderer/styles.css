@@ -63,7 +63,13 @@ button, input, select { font: inherit; }
 }
 
 .workspace { min-height: 0; flex: 1; display: grid; grid-template-columns: 405px minmax(0, 1fr) auto; }
-.sidebar { min-height: 0; display: grid; grid-template-rows: 55% 45%; border-right: 1px solid #b8c2ce; background: #f7f9fb; }
+.sidebar { min-height: 0; display: grid; grid-template-rows: 34px minmax(0, 55%) minmax(0, 45%); border-right: 1px solid #b8c2ce; background: #f7f9fb; }
+.global-search-nav { width: 100%; display: flex; align-items: center; gap: 6px; padding: 0 8px; border: 0; border-bottom: 1px solid #b8c2ce; color: #233242; background: #eef3f8; cursor: pointer; font-weight: 700; }
+.global-search-nav span { flex: 1; text-align: left; }
+.global-search-nav small { color: #657386; font-weight: 400; }
+.global-search-nav:hover { background: #e1effc; }
+.global-search-nav.selected { color: #fff; background: #0c7edb; }
+.global-search-nav.selected small { color: #e6f4ff; }
 .panel { min-height: 0; display: flex; flex-direction: column; }
 .sidebar-section { border-bottom: 1px solid #cbd3dc; }
 .panel-title { height: 28px; display: flex; align-items: center; padding: 0 8px; font-weight: 700; color: #2c3a48; background: #e6ebf1; border-bottom: 1px solid #c6d0da; }
@@ -129,6 +135,8 @@ button, input, select { font: inherit; }
 .audio-folder-row span { color: #6b7888; font-size: 12px; }
 .audio-folder-row b { color: #40566b; text-align: right; font-size: 12px; }
 .missing-audio-view .audio-actions .searchbox { flex: 0 1 360px; height: 30px; }
+.persistent-view { min-width: 0; min-height: 0; width: 100%; flex: 1; display: flex; }
+.view-hidden { display: none; }
 .missing-audio-header, .missing-audio-row { display: grid; grid-template-columns: minmax(260px, 1.5fr) 90px minmax(220px, 1fr) 34px; gap: 10px; align-items: center; }
 .missing-audio-header { min-height: 29px; padding: 0 17px; border-bottom: 1px solid #c6d0da; color: #637083; background: #e8edf2; font-size: 11px; font-weight: 700; }
 .missing-audio-row { min-height: 58px; margin-bottom: 5px; padding: 7px 9px; border: 1px solid #cbd4dd; background: #fff; }
