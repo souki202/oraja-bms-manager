@@ -6,7 +6,8 @@ import { ManagerRepository } from './repository';
 import { extractBokutachiChartId } from '../shared/ir';
 import { convertAudioFolder, findAudioFolders, scanAudioFolders, sortAudioFolders } from './audioConversion';
 import { cleanupBgaFolder, findBgaFolders, scanBgaFolders, sortBgaFolders } from './bgaCleanup';
-import type { AppSettings, AudioFolderScanUpdate, BgaFolderScanUpdate, BokutachiResolvePayload, ChartImportPayload, DuplicateDirectoryMergePayload, ExportPayload, ExportResult, OpenPathPayload } from '../shared/types';
+import { scanMissingAudio } from './missingAudio';
+import type { AppSettings, AudioFolderScanUpdate, BgaFolderScanUpdate, BokutachiResolvePayload, ChartImportPayload, DuplicateDirectoryMergePayload, ExportPayload, ExportResult, MissingAudioScanUpdate, OpenPathPayload } from '../shared/types';
 
 const appRoot = app.getAppPath();
 const dataRoot = app.isPackaged ? app.getPath('userData') : path.join(appRoot, 'data');
@@ -17,6 +18,7 @@ if (!app.isPackaged) {
 const repository = new ManagerRepository(appRoot, dataRoot);
 const audioScans = new Map<string, { cancelled: boolean }>();
 const bgaScans = new Map<string, { cancelled: boolean }>();
+const missingAudioScans = new Map<string, { cancelled: boolean }>();
 
 function createWindow(): void {
   const window = new BrowserWindow({
@@ -154,6 +156,31 @@ ipcMain.handle('bga:scan-cancel', (_event, scanId: string): boolean => {
 
 ipcMain.handle('bga:cleanup-folder', async (_event, directory: string) => {
   return cleanupBgaFolder(directory, await repository.loadBmsRoots());
+});
+
+ipcMain.handle('missing-audio:scan-start', async (event): Promise<string> => {
+  const roots = await repository.loadBmsRoots();
+  const scanId = randomUUID();
+  const scan = { cancelled: false };
+  missingAudioScans.set(scanId, scan);
+  const send = (update: Omit<MissingAudioScanUpdate, 'scanId'>): void => {
+    if (!event.sender.isDestroyed()) event.sender.send('missing-audio:scan-update', { scanId, ...update } satisfies MissingAudioScanUpdate);
+  };
+  setImmediate(() => void scanMissingAudio(roots, {
+    isCancelled: () => scan.cancelled || event.sender.isDestroyed(),
+    onProgress: (progress) => send({ ...progress, done: false })
+  }).then((result) => {
+    if (!scan.cancelled) send({ ...result, done: true });
+  }).catch((error: unknown) => send({ charts: [], scannedDirectories: 0, scannedCharts: 0, done: true, error: error instanceof Error ? error.message : String(error) }))
+    .finally(() => missingAudioScans.delete(scanId)));
+  return scanId;
+});
+
+ipcMain.handle('missing-audio:scan-cancel', (_event, scanId: string): boolean => {
+  const scan = missingAudioScans.get(scanId);
+  if (!scan) return false;
+  scan.cancelled = true;
+  return true;
 });
 
 ipcMain.handle('table:export', async (_event, payload: ExportPayload): Promise<ExportResult> => {

@@ -1,5 +1,5 @@
 import { contextBridge, ipcRenderer, webUtils } from 'electron';
-import type { AppSettings, AudioConversionResult, AudioFolder, AudioFolderScanUpdate, BgaCleanupResult, BgaFolder, BgaFolderScanUpdate, BokutachiResolvePayload, ChartImportAnalysis, ChartImportPayload, ChartImportResult, DirectoryNode, DuplicateDirectoryMergePayload, DuplicateDirectoryMergeResult, ExportPayload, ExportResult, ManagerState, OpenPathPayload } from '../shared/types';
+import type { AppSettings, AudioConversionResult, AudioFolder, AudioFolderScanUpdate, BgaCleanupResult, BgaFolder, BgaFolderScanUpdate, BokutachiResolvePayload, ChartImportAnalysis, ChartImportPayload, ChartImportResult, DirectoryNode, DuplicateDirectoryMergePayload, DuplicateDirectoryMergeResult, ExportPayload, ExportResult, ManagerState, MissingAudioScanUpdate, OpenPathPayload } from '../shared/types';
 
 contextBridge.exposeInMainWorld('managerApi', {
   loadState: (): Promise<ManagerState> => ipcRenderer.invoke('state:load'),
@@ -24,6 +24,13 @@ contextBridge.exposeInMainWorld('managerApi', {
     return () => ipcRenderer.off('bga:scan-update', wrapped);
   },
   cleanupBgaFolder: (directory: string): Promise<BgaCleanupResult> => ipcRenderer.invoke('bga:cleanup-folder', directory),
+  startMissingAudioScan: (): Promise<string> => ipcRenderer.invoke('missing-audio:scan-start'),
+  cancelMissingAudioScan: (scanId: string): Promise<boolean> => ipcRenderer.invoke('missing-audio:scan-cancel', scanId),
+  onMissingAudioScanUpdate: (listener: (update: MissingAudioScanUpdate) => void): (() => void) => {
+    const wrapped = (_event: Electron.IpcRendererEvent, update: MissingAudioScanUpdate): void => listener(update);
+    ipcRenderer.on('missing-audio:scan-update', wrapped);
+    return () => ipcRenderer.off('missing-audio:scan-update', wrapped);
+  },
   exportTable: (payload: ExportPayload): Promise<ExportResult> => ipcRenderer.invoke('table:export', payload),
   getPathForFile: (file: File): string => webUtils.getPathForFile(file),
   analyzeDroppedChart: (paths: string[]): Promise<ChartImportAnalysis> => ipcRenderer.invoke('chart-import:analyze', paths),

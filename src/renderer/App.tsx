@@ -1,8 +1,8 @@
 import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import type { JSX } from 'react';
 import { useVirtualizer } from '@tanstack/react-virtual';
-import { ArrowDown, ArrowUp, ArrowUpDown, AudioLines, ChevronDown, ChevronRight, Copy, Download, ExternalLink, Filter, FolderOpen, GitBranch, RefreshCw, Search, Settings, Trash2, Upload, X } from 'lucide-react';
-import type { AudioFolder, BgaFolder, ChartImportAnalysis, DirectoryNode, DuplicateChartGroup, ImportCandidate, ManagerState, TableChartRow, TableSummary } from '../shared/types';
+import { AlertTriangle, ArrowDown, ArrowUp, ArrowUpDown, AudioLines, ChevronDown, ChevronRight, Copy, Download, ExternalLink, Filter, FolderOpen, GitBranch, RefreshCw, Search, Settings, Trash2, Upload, X } from 'lucide-react';
+import type { AudioFolder, BgaFolder, ChartImportAnalysis, DirectoryNode, DuplicateChartGroup, ImportCandidate, ManagerState, MissingAudioChart, TableChartRow, TableSummary } from '../shared/types';
 import type { ChartColumnFilter, ChartColumnFilters, ChartFilterCache, ChartFilterKey, UrlFilterMode } from '../shared/chartFilters';
 import { clearStatuses, countActiveColumnFilters, isColumnFilterActive, matchesChartFilters, normalizeSearchQuery, prepareColumnFilters } from '../shared/chartFilters';
 import { countRedundantChartCopies, findDuplicateChartGroups } from '../shared/duplicateCharts';
@@ -27,7 +27,7 @@ type SortDirection = 'asc' | 'desc';
 type SortState = { key: SortKey; direction: SortDirection };
 type TableColumn = { key: SortKey; label: string; width: number; minWidth: number };
 type FilterMenuState = { key: SortKey; x: number; y: number } | null;
-type ActiveView = 'charts' | 'duplicates' | 'audio' | 'bga';
+type ActiveView = 'charts' | 'duplicates' | 'audio' | 'bga' | 'missing-audio';
 
 const defaultSort: SortState = { key: 'title', direction: 'asc' };
 const editorVersion = String(packageJson.version ?? '');
@@ -216,6 +216,15 @@ export function App(): JSX.Element {
   function selectBgaCleanup(): void {
     if (isAudioConversionBusy) return;
     setActiveView('bga');
+    setSelectedBmsRoot(null);
+    setSelectedTableId(null);
+    setSimilarTarget(null);
+    setColumnFilters({});
+  }
+
+  function selectMissingAudio(): void {
+    if (isAudioConversionBusy) return;
+    setActiveView('missing-audio');
     setSelectedBmsRoot(null);
     setSelectedTableId(null);
     setSimilarTarget(null);
@@ -424,7 +433,7 @@ export function App(): JSX.Element {
         </button>
         <div className="topbar-counts">
           <span>{state.tables.length} tables</span>
-          <span>{activeView === 'duplicates' ? `${duplicateGroups.length} duplicate groups` : activeView === 'audio' ? 'WAV to OGG' : activeView === 'bga' ? 'BGA cleanup' : isListLoading ? 'loading...' : `${visibleRows.length} charts`}</span>
+          <span>{activeView === 'duplicates' ? `${duplicateGroups.length} duplicate groups` : activeView === 'audio' ? 'WAV to OGG' : activeView === 'bga' ? 'BGA cleanup' : activeView === 'missing-audio' ? 'Missing audio' : isListLoading ? 'loading...' : `${visibleRows.length} charts`}</span>
         </div>
       </header>
 
@@ -464,6 +473,10 @@ export function App(): JSX.Element {
               <Trash2 size={14} />
               <span>BGA Cleanup</span>
             </button>
+            <button className={`tree-row duplicate-nav-row ${activeView === 'missing-audio' ? 'selected' : ''}`} disabled={isAudioConversionBusy} onClick={selectMissingAudio}>
+              <AlertTriangle size={14} />
+              <span>Missing Audio</span>
+            </button>
             <div className="roots-list">
               {state.bmsRootNodes.map((node) => (
                 <button key={node.id} className={`tree-row path-row ${activeView === 'charts' && selectedBmsRoot?.path === node.path ? 'selected' : ''}`} disabled={isAudioConversionBusy} onClick={() => selectBmsRoot(node)} title={node.path}>
@@ -479,10 +492,10 @@ export function App(): JSX.Element {
         <main className="mainpane">
           <div className="toolbar">
             <div className="title-block">
-              <strong>{activeView === 'duplicates' ? 'Duplicate Charts' : activeView === 'audio' ? 'Audio Conversion' : activeView === 'bga' ? 'BGA Cleanup' : selectedBmsRoot?.name ?? activeTable?.name ?? 'All Tables'}</strong>
-              <span>{activeView === 'duplicates' ? `${duplicateGroups.length} groups / ${redundantCopyCount} redundant copies` : activeView === 'audio' ? 'Convert WAV files without changing charts' : activeView === 'bga' ? 'Remove legacy BGA files when matching MP4 exists' : makeSubtitle(selectedBmsRoot, activeTable, visibleRows.length)}</span>
+              <strong>{activeView === 'duplicates' ? 'Duplicate Charts' : activeView === 'audio' ? 'Audio Conversion' : activeView === 'bga' ? 'BGA Cleanup' : activeView === 'missing-audio' ? 'Missing Audio' : selectedBmsRoot?.name ?? activeTable?.name ?? 'All Tables'}</strong>
+              <span>{activeView === 'duplicates' ? `${duplicateGroups.length} groups / ${redundantCopyCount} redundant copies` : activeView === 'audio' ? 'Convert WAV files without changing charts' : activeView === 'bga' ? 'Remove legacy BGA files when matching MP4 exists' : activeView === 'missing-audio' ? 'Find charts whose defined audio files are missing' : makeSubtitle(selectedBmsRoot, activeTable, visibleRows.length)}</span>
             </div>
-            {activeView !== 'audio' && activeView !== 'bga' && <label className="searchbox">
+            {activeView !== 'audio' && activeView !== 'bga' && activeView !== 'missing-audio' && <label className="searchbox">
               <Search size={16} />
               <input value={searchText} onChange={(event) => void updateSearch(event.target.value)} placeholder={activeView === 'duplicates' ? 'Search title / artist / hash / path' : 'Search title / artist / hash / table'} />
             </label>}
@@ -508,6 +521,8 @@ export function App(): JSX.Element {
               <AudioConversionView onMessage={showToast} onConversionBusyChange={setIsAudioConversionBusy} />
             ) : activeView === 'bga' ? (
               <BgaCleanupView onMessage={showToast} onCleanupBusyChange={setIsAudioConversionBusy} />
+            ) : activeView === 'missing-audio' ? (
+              <MissingAudioView onMessage={showToast} onBusyChange={setIsAudioConversionBusy} />
             ) : (
               <ChartTable rows={visibleRows} sort={sort} columnFilters={columnFilters} onSort={toggleSort} onFilterClick={openFilterMenu} onContextMenu={openContextMenu} />
             )}
@@ -607,6 +622,59 @@ export function App(): JSX.Element {
       toastTimeoutRef.current = null;
     }, 3500);
   }
+}
+
+function MissingAudioView({ onMessage, onBusyChange }: { onMessage(message: string): void; onBusyChange(busy: boolean): void }): JSX.Element {
+  const [charts, setCharts] = useState<MissingAudioChart[]>([]);
+  const [loading, setLoading] = useState(false);
+  const [query, setQuery] = useState('');
+  const [scannedCharts, setScannedCharts] = useState(0);
+  const [scannedDirectories, setScannedDirectories] = useState(0);
+  const scanIdRef = useRef('');
+  const visible = useMemo(() => {
+    const needle = query.trim().toLocaleLowerCase();
+    return needle ? charts.filter((chart) => `${chart.title}\n${chart.artist}\n${chart.path}\n${chart.missingFiles.join('\n')}`.toLocaleLowerCase().includes(needle)) : charts;
+  }, [charts, query]);
+
+  useEffect(() => {
+    const unsubscribe = window.managerApi.onMissingAudioScanUpdate((update) => {
+      if (update.scanId !== scanIdRef.current) return;
+      setScannedCharts(update.scannedCharts);
+      setScannedDirectories(update.scannedDirectories);
+      if (update.done) setCharts(update.charts);
+      else if (update.charts.length) setCharts((current) => [...current, ...update.charts]);
+      if (update.error) onMessage(update.error);
+      if (update.done) { setLoading(false); onBusyChange(false); }
+    });
+    void startScan();
+    return () => { unsubscribe(); if (scanIdRef.current) void window.managerApi.cancelMissingAudioScan(scanIdRef.current); onBusyChange(false); };
+  }, []);
+
+  async function startScan(): Promise<void> {
+    if (scanIdRef.current) await window.managerApi.cancelMissingAudioScan(scanIdRef.current);
+    setCharts([]); setScannedCharts(0); setScannedDirectories(0); setLoading(true); onBusyChange(true);
+    try { scanIdRef.current = await window.managerApi.startMissingAudioScan(); }
+    catch (error) { setLoading(false); onBusyChange(false); onMessage(error instanceof Error ? error.message : String(error)); }
+  }
+
+  return <div className="audio-conversion missing-audio-view">
+    <div className="audio-actions">
+      <div><strong>{loading ? `Scanning... ${scannedCharts.toLocaleString()} charts` : `${charts.length.toLocaleString()} suspicious charts`}</strong><span>{scannedDirectories.toLocaleString()} folders scanned; OGG/WAV alternatives are accepted</span></div>
+      <label className="searchbox"><Search size={16} /><input value={query} onChange={(event) => setQuery(event.target.value)} placeholder="Search chart / path / missing file" /></label>
+      <button onClick={() => void startScan()} disabled={loading}><RefreshCw size={15} />Rescan</button>
+    </div>
+    <div className="missing-audio-header"><span>CHART</span><span>AUDIO</span><span>MISSING FILES</span><span /></div>
+    <div className="audio-folder-list">
+      {loading && charts.length === 0 && <div className="duplicate-empty"><RefreshCw className="spin" size={28} /><strong>Scanning BMS folders...</strong><span>Results appear while the scan is running.</span></div>}
+      {!loading && charts.length === 0 && <div className="duplicate-empty"><AudioLines size={28} /><strong>No missing audio found</strong><span>Every defined audio file was found.</span></div>}
+      {visible.map((chart) => <div className="missing-audio-row" key={chart.path}>
+        <div><strong title={chart.title}>{chart.title}</strong><span title={chart.path}>{chart.artist ? `${chart.artist} — ` : ''}{chart.path}</span></div>
+        <b>{chart.existingCount} / {chart.definedCount}<small>{chart.missingCount} missing</small></b>
+        <span title={chart.missingFiles.join('\n')}>{chart.missingFiles.slice(0, 5).join(', ')}{chart.missingFiles.length > 5 ? ', ...' : ''}</span>
+        <button className="duplicate-open-button" onClick={() => void window.managerApi.openPath({ path: chart.path, folder: chart.folder })} title="Open in Explorer"><FolderOpen size={15} /></button>
+      </div>)}
+    </div>
+  </div>;
 }
 
 function AudioConversionView({ onMessage, onConversionBusyChange }: { onMessage(message: string): void; onConversionBusyChange(busy: boolean): void }): JSX.Element {

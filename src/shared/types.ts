@@ -254,3 +254,24 @@ export interface BgaCleanupFailedFile {
   fileName: string;
   error: string;
 }
+
+export interface MissingAudioChart {
+  path: string;
+  folder: string;
+  fileName: string;
+  title: string;
+  artist: string;
+  definedCount: number;
+  existingCount: number;
+  missingCount: number;
+  missingFiles: string[];
+}
+
+export interface MissingAudioScanUpdate {
+  scanId: string;
+  charts: MissingAudioChart[];
+  scannedDirectories: number;
+  scannedCharts: number;
+  done: boolean;
+  error?: string;
+}
