@@ -2,7 +2,7 @@ import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import type { JSX } from 'react';
 import { useVirtualizer } from '@tanstack/react-virtual';
 import { AlertTriangle, ArrowDown, ArrowUp, ArrowUpDown, AudioLines, ChevronDown, ChevronRight, Copy, Download, ExternalLink, Filter, FolderOpen, GitBranch, RefreshCw, Search, Settings, Trash2, Upload, X } from 'lucide-react';
-import type { AudioFolder, BgaFolder, ChartImportAnalysis, DirectoryNode, DuplicateChartGroup, ImportCandidate, ManagerState, MissingAudioChart, TableChartRow, TableSummary } from '../shared/types';
+import type { AudioFolder, BgaFolder, ChartImportAnalysis, DirectoryNode, DuplicateChartGroup, ImportCandidate, ManagerState, MissingAudioChart, TableChartRow } from '../shared/types';
 import type { ChartColumnFilter, ChartColumnFilters, ChartFilterCache, ChartFilterKey, UrlFilterMode } from '../shared/chartFilters';
 import { clearStatuses, countActiveColumnFilters, isColumnFilterActive, matchesChartFilters, matchesGlobalChartSearch, normalizeSearchQuery, prepareColumnFilters } from '../shared/chartFilters';
 import { countRedundantChartCopies, findDuplicateChartGroups } from '../shared/duplicateCharts';
@@ -11,6 +11,9 @@ import { buildBmsPathExport, buildTableExport } from '../shared/exportTable';
 import { bokutachiGameForMode, buildStaticIrUrl, canOpenBokutachi, hasAnyIrTarget } from '../shared/ir';
 import type { IrTarget } from '../shared/ir';
 import { buildRowsAsync } from './asyncRows';
+import { chartColumns, createColumnWidthState, defaultSort, emptyColumnFilter, isRowUnderRoot, sortRows, sortTables } from './chartListModel';
+import type { SortDirection, SortKey, SortState, TableColumn } from './chartListModel';
+import { automaticallyMergedDuplicateGroupIds, duplicateDirectories, duplicateLocationDetails, filterDuplicateGroups, samePathText, shortHash, uniquePaths } from './duplicateGroupModel';
 import { positionContextMenu, positionFilterMenu } from './menuPosition';
 import type { MenuSide } from './menuPosition';
 import packageJson from '../../package.json';
@@ -22,39 +25,10 @@ type ContextMenuState = {
   row: TableChartRow;
 } | null;
 
-type SortKey = 'level' | 'songLevel' | 'title' | 'artist' | 'url1' | 'url2' | 'status' | 'notes' | 'tableName' | 'path';
-type SortDirection = 'asc' | 'desc';
-type SortState = { key: SortKey; direction: SortDirection };
-type TableColumn = { key: SortKey; label: string; width: number; minWidth: number };
 type FilterMenuState = { key: SortKey; x: number; y: number } | null;
 type ActiveView = 'charts' | 'global-search' | 'duplicates' | 'audio' | 'bga' | 'missing-audio';
 
-const defaultSort: SortState = { key: 'title', direction: 'asc' };
 const editorVersion = String(packageJson.version ?? '');
-const collator = new Intl.Collator('ja', { numeric: true, sensitivity: 'base' });
-const chartColumns: TableColumn[] = [
-  { key: 'level', label: 'FOLDER', width: 120, minWidth: 86 },
-  { key: 'songLevel', label: 'LEVEL', width: 62, minWidth: 54 },
-  { key: 'title', label: 'TITLE', width: 300, minWidth: 190 },
-  { key: 'artist', label: 'ARTIST', width: 230, minWidth: 160 },
-  { key: 'url1', label: 'URL1', width: 52, minWidth: 46 },
-  { key: 'url2', label: 'URL2', width: 52, minWidth: 46 },
-  { key: 'status', label: 'CLEAR', width: 120, minWidth: 104 },
-  { key: 'notes', label: 'NOTES', width: 78, minWidth: 66 },
-  { key: 'tableName', label: 'TABLE', width: 180, minWidth: 130 },
-  { key: 'path', label: 'PATH', width: 520, minWidth: 360 }
-];
-const statusOrder = new Map<string, number>([
-  ['NO SONG', 0],
-  ['NO PLAY', 1],
-  ['FAILED', 2],
-  ['ASSIST CLEAR', 3],
-  ['EASY CLEAR', 4],
-  ['CLEAR', 5],
-  ['HARD CLEAR', 6],
-  ['EX HARD CLEAR', 7],
-  ['FULL COMBO', 8]
-]);
 
 export function App(): JSX.Element {
   const [state, setState] = useState<ManagerState | null>(null);
@@ -395,7 +369,7 @@ export function App(): JSX.Element {
   }
 
   async function mergeDuplicateGroup(group: DuplicateChartGroup, targetDirectory: string, sourceDirectories: string[]): Promise<void> {
-    const directories = uniqueStrings(sourceDirectories);
+    const directories = uniquePaths(sourceDirectories);
     const sourceOnlyDirectories = directories.filter((directory) => !samePathText(directory, targetDirectory));
     if (directories.length < 2 || sourceOnlyDirectories.length === 0) {
       showToast('Select at least one source directory in addition to the merge target.');
@@ -1479,28 +1453,6 @@ function UrlButton({ url }: { url: string }): JSX.Element {
   );
 }
 
-function createColumnWidthState(): Record<SortKey, number> {
-  return chartColumns.reduce<Record<SortKey, number>>((widths, column) => {
-    widths[column.key] = column.width;
-    return widths;
-  }, {
-    level: 0,
-    songLevel: 0,
-    title: 0,
-    artist: 0,
-    url1: 0,
-    url2: 0,
-    status: 0,
-    notes: 0,
-    tableName: 0,
-    path: 0
-  });
-}
-
-function emptyColumnFilter(): ChartColumnFilter {
-  return { text: '', min: '', max: '', statuses: [], urlMode: 'all' };
-}
-
 async function resolveBokutachiUrl(row: TableChartRow): Promise<string> {
   const game = bokutachiGameForMode(row.mode);
   if (!game || (!row.sha256 && !row.md5)) return '';
@@ -1511,130 +1463,4 @@ function makeSubtitle(selectedBmsRoot: DirectoryNode | null, activeTable: { char
   if (selectedBmsRoot) return `${visibleCount} charts under selected BMS Path`;
   if (activeTable) return `${activeTable.chartCount} charts / ${activeTable.missingCount} NO SONG`;
   return `${visibleCount} charts`;
-}
-
-function sortTables(tables: TableSummary[]): TableSummary[] {
-  return [...tables].sort((a, b) => a.name.localeCompare(b.name, 'ja', { numeric: true, sensitivity: 'base' }));
-}
-
-function sortRows(rows: TableChartRow[], sort: SortState): TableChartRow[] {
-  return [...rows].sort((a, b) => {
-    const direction = sort.direction === 'asc' ? 1 : -1;
-    return compareValues(sortValue(a, sort.key), sortValue(b, sort.key)) * direction;
-  });
-}
-
-function sortValue(row: TableChartRow, key: SortKey): string | number {
-  if (key === 'songLevel') return row.songLevel ?? row.difficulty ?? -1;
-  if (key === 'status') return statusOrder.get(row.status) ?? -1;
-  if (key === 'notes') return row.notes ?? -1;
-  return String(row[key] ?? '').toLowerCase();
-}
-
-function compareValues(a: string | number, b: string | number): number {
-  if (typeof a === 'number' && typeof b === 'number') return a - b;
-  return collator.compare(String(a), String(b));
-}
-
-function isRowUnderRoot(row: TableChartRow, root: string): boolean {
-  const normalizedRoot = normalizePath(root).replace(/\/+$/, '');
-  const candidates = [row.path, row.folder].map(normalizePath).filter(Boolean);
-  return candidates.some((candidate) => candidate === normalizedRoot || candidate.startsWith(`${normalizedRoot}/`));
-}
-
-function normalizePath(value: string | null | undefined): string {
-  return (value ?? '').replace(/\\/g, '/').toLowerCase();
-}
-
-function filterDuplicateGroups(groups: DuplicateChartGroup[], query: string): DuplicateChartGroup[] {
-  const normalizedQuery = normalizeSearchQuery(query);
-  if (!normalizedQuery) return groups;
-  return groups.filter((group) => normalizeSearchQuery([
-    group.title,
-    group.artist,
-    ...group.sharedSha256,
-    ...group.sharedMd5,
-    ...group.copies.flatMap((row) => [row.title, row.subtitle, row.artist, row.path, row.folder])
-  ].join(' ')).includes(normalizedQuery));
-}
-
-function shortHash(hash: string): string {
-  return hash.length > 12 ? `${hash.slice(0, 12)}...` : hash;
-}
-
-function duplicateLocationDetails(row: TableChartRow): string {
-  const details = [
-    row.songLevel != null ? `Level ${row.songLevel}` : '',
-    row.notes != null ? `${row.notes} notes` : '',
-    row.mode != null ? `${row.mode} keys` : ''
-  ].filter(Boolean);
-  return details.join(' / ') || 'Right-click for chart actions';
-}
-
-function duplicateDirectories(group: DuplicateChartGroup): { path: string; copyCount: number }[] {
-  const directories = new Map<string, { path: string; copyCount: number }>();
-  for (const row of group.copies) {
-    const directory = chartDirectory(row);
-    if (!directory) continue;
-    const key = normalizePath(directory).replace(/\/+$/, '');
-    const current = directories.get(key);
-    if (current) current.copyCount += 1;
-    else directories.set(key, { path: directory, copyCount: 1 });
-  }
-  return [...directories.values()].sort((a, b) => a.path.localeCompare(b.path, 'ja', { numeric: true, sensitivity: 'base' }));
-}
-
-function chartDirectory(row: TableChartRow): string {
-  if (!row.path) return trimTrailingSeparators(row.folder);
-  return directoryName(row.path);
-}
-
-function directoryName(filePath: string): string {
-  const trimmed = trimTrailingSeparators(filePath);
-  const slashIndex = Math.max(trimmed.lastIndexOf('/'), trimmed.lastIndexOf('\\'));
-  return slashIndex >= 0 ? trimmed.slice(0, slashIndex) : '';
-}
-
-function trimTrailingSeparators(value: string): string {
-  return value.replace(/[\\/]+$/, '');
-}
-
-function uniqueStrings(values: string[]): string[] {
-  const seen = new Set<string>();
-  const unique: string[] = [];
-  for (const value of values) {
-    const key = pathKey(value);
-    if (!key || seen.has(key)) continue;
-    seen.add(key);
-    unique.push(value);
-  }
-  return unique;
-}
-
-function samePathText(a: string | null | undefined, b: string | null | undefined): boolean {
-  const normalizedA = pathKey(a);
-  const normalizedB = pathKey(b);
-  return Boolean(normalizedA && normalizedB) && normalizedA === normalizedB;
-}
-
-function automaticallyMergedDuplicateGroupIds(groups: DuplicateChartGroup[], targetDirectory: string, sourceDirectories: string[]): string[] {
-  const sourceKeys = new Set(sourceDirectories.map(pathKey).filter(Boolean));
-  const targetKey = pathKey(targetDirectory);
-  if (!targetKey || sourceKeys.size < 2) return [];
-
-  return groups
-    .filter((group) => {
-      const directories = duplicateDirectories(group).map((directory) => directory.path);
-      const originalKeys = new Set(directories.map(pathKey).filter(Boolean));
-      if (originalKeys.size < 2) return false;
-      if (![...originalKeys].some((key) => sourceKeys.has(key))) return false;
-
-      const mergedKeys = new Set([...originalKeys].map((key) => sourceKeys.has(key) ? targetKey : key));
-      return mergedKeys.size <= 1;
-    })
-    .map((group) => group.id);
-}
-
-function pathKey(value: string | null | undefined): string {
-  return normalizePath(value).replace(/\/+$/, '');
 }

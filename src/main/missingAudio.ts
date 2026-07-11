@@ -80,7 +80,7 @@ async function inspectChart(chartPath: string, files: DirectoryFileIndex): Promi
   } catch { return null; }
   let title = path.basename(chartPath, extension);
   let artist = '';
-  let definitions: string[] = [];
+  let definitions: string[];
   if (extension === '.bmson') {
     try {
       const json = JSON.parse(text) as { info?: { title?: string; artist?: string }; sound_channels?: Array<{ name?: string }> };
@@ -99,12 +99,12 @@ async function inspectChart(chartPath: string, files: DirectoryFileIndex): Promi
     }
     definitions = [...map.values()];
   }
-  definitions = [...new Set(definitions.map((name) => name.replace(/\\/g, '/').toLocaleLowerCase()))];
-  if (!definitions.length) return null;
-  const existence = await Promise.all(definitions.map((name) => files.hasAudioFile(name)));
-  const missing = definitions.filter((_name, index) => !existence[index]);
+  const normalizedDefinitions = [...new Set(definitions.map((name) => name.replace(/\\/g, '/').toLocaleLowerCase()))];
+  if (!normalizedDefinitions.length) return null;
+  const existence = await Promise.all(normalizedDefinitions.map((name) => files.hasAudioFile(name)));
+  const missing = normalizedDefinitions.filter((_name, index) => !existence[index]);
   if (!missing.length) return null;
-  return { path: chartPath, folder: path.dirname(chartPath), fileName: path.basename(chartPath), title, artist, definedCount: definitions.length, existingCount: definitions.length - missing.length, missingCount: missing.length, missingFiles: missing };
+  return { path: chartPath, folder: path.dirname(chartPath), fileName: path.basename(chartPath), title, artist, definedCount: normalizedDefinitions.length, existingCount: normalizedDefinitions.length - missing.length, missingCount: missing.length, missingFiles: missing };
 }
 
 class DirectoryFileIndex {
