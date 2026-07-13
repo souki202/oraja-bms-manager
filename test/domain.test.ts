@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 import {
   buildSimilarSearchRows,
   clearToStatus,
+  createSameSongSearchIndex,
   findSimilarRows,
   normalizeArtistBase,
   normalizeTitleBase
@@ -220,6 +221,22 @@ describe('buildSimilarSearchRows', () => {
 
     expect(result.map((item) => item.id)).toEqual(['library-a', 'table-a']);
     expect(result[0].level).toBe('');
+  });
+});
+
+describe('createSameSongSearchIndex', () => {
+  it('reuses preprocessed rows while preserving a selected library chart omitted as a duplicate', () => {
+    const table = row('table-a', 'Air -GOD-', 'Artist', 'NO SONG', { sha256: 'same-hash' });
+    const library = row('library-a', 'Air -GAIA-', 'Artist obj:author', 'CLEAR', {
+      tableName: 'BMS Path',
+      sha256: 'same-hash'
+    });
+    const other = row('table-b', 'Air', 'Artist', 'NO SONG');
+    const index = createSameSongSearchIndex([table, other], [library]);
+
+    expect(index.rowCount).toBe(2);
+    expect(index.find(library).map((item) => item.id)).toEqual(['library-a', 'table-a', 'table-b']);
+    expect(index.find(other).map((item) => item.id)).toEqual(['table-b', 'table-a']);
   });
 });
 

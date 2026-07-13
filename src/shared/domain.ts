@@ -60,59 +60,20 @@ export function rowMatchesSearch(row: TableChartRow, query: string): boolean {
   return haystack.includes(normalized);
 }
 
+export interface SameSongSearchIndex {
+  readonly rowCount: number;
+  find(target: TableChartRow): TableChartRow[];
+}
+
+export function createSameSongSearchIndex(
+  tableRows: TableChartRow[],
+  libraryRows: TableChartRow[]
+): SameSongSearchIndex {
+  return createSameSongSearchIndexFromRows(buildSimilarSearchRows(tableRows, libraryRows));
+}
+
 export function findSimilarRows(target: TableChartRow, rows: TableChartRow[]): TableChartRow[] {
-  const targetIdentity = songIdentity(target);
-  const rowIdentities = new Map(rows.map((row) => [row, songIdentity(row)]));
-  const relatedArtistKeys = relatedArtists(target, targetIdentity, rows, rowIdentities);
-  const candidates: TableChartRow[] = [];
-
-  for (const row of rows) {
-    let confidence = 0;
-    let matchReason = '';
-
-    if (row.id === target.id) {
-      confidence = 1;
-      matchReason = 'selected chart';
-    } else if (sameChartHash(target, row)) {
-      confidence = 0.99;
-      matchReason = 'same chart hash';
-    } else if (hasParentHashRelationship(target, row)) {
-      confidence = 0.98;
-      matchReason = 'parent hash';
-    } else {
-      const rowIdentity = rowIdentities.get(row) ?? songIdentity(row);
-      if (targetIdentity.titleKey && targetIdentity.titleKey === rowIdentity.titleKey) {
-        if (sameSource(target, row)) {
-          confidence = 0.93;
-          matchReason = 'title + source';
-        } else if (targetIdentity.artistKey && targetIdentity.artistKey === rowIdentity.artistKey) {
-          confidence = targetIdentity.fullTitleKey === rowIdentity.fullTitleKey ? 0.95 : 0.92;
-          matchReason = 'title + artist';
-        } else if (rowIdentity.artistKey && relatedArtistKeys.has(rowIdentity.artistKey)) {
-          confidence = 0.88;
-          matchReason = 'title + related artist';
-        } else if (!targetIdentity.artistKey && !rowIdentity.artistKey) {
-          confidence = 0.78;
-          matchReason = 'title (artist unavailable)';
-        } else if (!targetIdentity.artistKey || !rowIdentity.artistKey) {
-          confidence = 0.7;
-          matchReason = 'title (one artist unavailable)';
-        }
-      }
-    }
-
-    if (confidence >= 0.65) {
-      candidates.push({ ...row, confidence, matchReason });
-    }
-  }
-
-  return candidates.sort((a, b) => {
-    const score = (b.confidence ?? 0) - (a.confidence ?? 0);
-    if (score !== 0) return score;
-    if (a.status === 'NO SONG' && b.status !== 'NO SONG') return -1;
-    if (b.status === 'NO SONG' && a.status !== 'NO SONG') return 1;
-    return a.title.localeCompare(b.title, 'ja');
-  }).slice(0, 500);
+  return createSameSongSearchIndexFromRows(rows).find(target);
 }
 
 export function buildSimilarSearchRows(
@@ -132,6 +93,119 @@ export function buildSimilarSearchRows(
   }
 
   return rows;
+}
+
+interface PreparedSongRow {
+  row: TableChartRow;
+  identity: SongIdentity;
+  sha256: string;
+  md5: string;
+  parentHashes: Set<string>;
+  primaryParentHashes: Set<string>;
+  sourceKeys?: Set<string>;
+  directory?: string;
+  isBmsPath: boolean;
+}
+
+interface SameSongIndexData {
+  preparedByRow: WeakMap<TableChartRow, PreparedSongRow>;
+  rowsById: Map<string, PreparedSongRow>;
+  rowsByTitle: Map<string, PreparedSongRow[]>;
+  rowsBySha256: Map<string, PreparedSongRow[]>;
+  rowsByMd5: Map<string, PreparedSongRow[]>;
+  rowsByParentHash: Map<string, PreparedSongRow[]>;
+  rowsByPrimaryParentHash: Map<string, PreparedSongRow[]>;
+}
+
+function createSameSongSearchIndexFromRows(rows: TableChartRow[]): SameSongSearchIndex {
+  const data: SameSongIndexData = {
+    preparedByRow: new WeakMap(),
+    rowsById: new Map(),
+    rowsByTitle: new Map(),
+    rowsBySha256: new Map(),
+    rowsByMd5: new Map(),
+    rowsByParentHash: new Map(),
+    rowsByPrimaryParentHash: new Map()
+  };
+
+  for (const row of rows) {
+    const prepared = prepareSongRow(row);
+    data.preparedByRow.set(row, prepared);
+    data.rowsById.set(row.id, prepared);
+    addPreparedRow(data.rowsByTitle, prepared.identity.titleKey, prepared);
+    addPreparedRow(data.rowsBySha256, prepared.sha256, prepared);
+    addPreparedRow(data.rowsByMd5, prepared.md5, prepared);
+    for (const hash of prepared.parentHashes) addPreparedRow(data.rowsByParentHash, hash, prepared);
+    for (const hash of prepared.primaryParentHashes) addPreparedRow(data.rowsByPrimaryParentHash, hash, prepared);
+  }
+
+  return {
+    rowCount: rows.length,
+    find(target) {
+      return findPreparedSimilarRows(target, data);
+    }
+  };
+}
+
+function findPreparedSimilarRows(target: TableChartRow, data: SameSongIndexData): TableChartRow[] {
+  const targetPrepared = data.preparedByRow.get(target) ?? prepareSongRow(target);
+  const selectedPrepared = data.rowsById.get(target.id) ?? targetPrepared;
+  const titleRows = data.rowsByTitle.get(targetPrepared.identity.titleKey) ?? [];
+  const rowsToCheck = new Set<PreparedSongRow>(titleRows);
+  rowsToCheck.add(selectedPrepared);
+  addPreparedRows(rowsToCheck, data.rowsBySha256.get(targetPrepared.sha256));
+  addPreparedRows(rowsToCheck, data.rowsByMd5.get(targetPrepared.md5));
+  addPreparedRows(rowsToCheck, data.rowsByParentHash.get(targetPrepared.md5));
+  for (const hash of targetPrepared.parentHashes) addPreparedRows(rowsToCheck, data.rowsByMd5.get(hash));
+  for (const hash of targetPrepared.primaryParentHashes) addPreparedRows(rowsToCheck, data.rowsByPrimaryParentHash.get(hash));
+
+  const relatedArtistKeys = relatedPreparedArtists(targetPrepared, titleRows);
+  const candidates: TableChartRow[] = [];
+  for (const prepared of rowsToCheck) {
+    const match = scorePreparedRow(targetPrepared, prepared, relatedArtistKeys);
+    if (match.confidence < 0.65) continue;
+    candidates.push({ ...prepared.row, ...match });
+  }
+
+  return candidates.sort(compareSimilarRows).slice(0, 500);
+}
+
+function scorePreparedRow(
+  target: PreparedSongRow,
+  candidate: PreparedSongRow,
+  relatedArtistKeys: Set<string>
+): { confidence: number; matchReason: string } {
+  if (candidate.row.id === target.row.id) return { confidence: 1, matchReason: 'selected chart' };
+  if (samePreparedChartHash(target, candidate)) return { confidence: 0.99, matchReason: 'same chart hash' };
+  if (hasPreparedParentHashRelationship(target, candidate)) return { confidence: 0.98, matchReason: 'parent hash' };
+  if (!target.identity.titleKey || target.identity.titleKey !== candidate.identity.titleKey) {
+    return { confidence: 0, matchReason: '' };
+  }
+  if (samePreparedSource(target, candidate)) return { confidence: 0.93, matchReason: 'title + source' };
+  if (target.identity.artistKey && target.identity.artistKey === candidate.identity.artistKey) {
+    return {
+      confidence: target.identity.fullTitleKey === candidate.identity.fullTitleKey ? 0.95 : 0.92,
+      matchReason: 'title + artist'
+    };
+  }
+  if (candidate.identity.artistKey && relatedArtistKeys.has(candidate.identity.artistKey)) {
+    return { confidence: 0.88, matchReason: 'title + related artist' };
+  }
+  if (!target.identity.artistKey && !candidate.identity.artistKey) {
+    return { confidence: 0.78, matchReason: 'title (artist unavailable)' };
+  }
+  if (!target.identity.artistKey || !candidate.identity.artistKey) {
+    return { confidence: 0.7, matchReason: 'title (one artist unavailable)' };
+  }
+  return { confidence: 0, matchReason: '' };
+}
+
+function compareSimilarRows(a: TableChartRow, b: TableChartRow): number {
+  const score = (b.confidence ?? 0) - (a.confidence ?? 0);
+  if (score !== 0) return score;
+  if (a.status === 'NO SONG' && b.status !== 'NO SONG') return -1;
+  if (b.status === 'NO SONG' && a.status !== 'NO SONG') return 1;
+  return a.title.localeCompare(b.title, 'ja');
 }
 
 interface SongIdentity {
@@ -225,24 +299,27 @@ function normalizeIdentityText(value: string): string {
     .trim();
 }
 
-function sameChartHash(a: TableChartRow, b: TableChartRow): boolean {
-  return Boolean(
-    (a.sha256 && b.sha256 && a.sha256.toLowerCase() === b.sha256.toLowerCase())
-    || (a.md5 && b.md5 && a.md5.toLowerCase() === b.md5.toLowerCase())
-  );
+function prepareSongRow(row: TableChartRow): PreparedSongRow {
+  return {
+    row,
+    identity: songIdentity(row),
+    sha256: row.sha256.toLowerCase(),
+    md5: row.md5.toLowerCase(),
+    parentHashes: parentHashes(row),
+    primaryParentHashes: primaryParentHashes(row),
+    isBmsPath: row.tableName === 'BMS Path'
+  };
 }
 
-function hasParentHashRelationship(a: TableChartRow, b: TableChartRow): boolean {
-  const aMd5 = a.md5.toLowerCase();
-  const bMd5 = b.md5.toLowerCase();
-  const aParents = parentHashes(a);
-  const bParents = parentHashes(b);
-  if (aMd5 && bParents.has(aMd5)) return true;
-  if (bMd5 && aParents.has(bMd5)) return true;
-  if (a.tableName === 'BMS Path' || b.tableName === 'BMS Path') return false;
-  const aPrimaryParents = primaryParentHashes(a);
-  const bPrimaryParents = primaryParentHashes(b);
-  return [...aPrimaryParents].some((hash) => bPrimaryParents.has(hash));
+function samePreparedChartHash(a: PreparedSongRow, b: PreparedSongRow): boolean {
+  return Boolean((a.sha256 && a.sha256 === b.sha256) || (a.md5 && a.md5 === b.md5));
+}
+
+function hasPreparedParentHashRelationship(a: PreparedSongRow, b: PreparedSongRow): boolean {
+  if (a.md5 && b.parentHashes.has(a.md5)) return true;
+  if (b.md5 && a.parentHashes.has(b.md5)) return true;
+  if (a.isBmsPath || b.isBmsPath) return false;
+  return setsOverlap(a.primaryParentHashes, b.primaryParentHashes);
 }
 
 function parentHashes(row: TableChartRow): Set<string> {
@@ -255,29 +332,46 @@ function primaryParentHashes(row: TableChartRow): Set<string> {
   return new Set(String(row.orgMd5 ?? '').toLowerCase().match(/[a-f0-9]{32}/g) ?? []);
 }
 
-function relatedArtists(
-  target: TableChartRow,
-  targetIdentity: SongIdentity,
-  rows: TableChartRow[],
-  identities: Map<TableChartRow, SongIdentity>
-): Set<string> {
+function relatedPreparedArtists(target: PreparedSongRow, rows: PreparedSongRow[]): Set<string> {
   const artistKeys = new Set<string>();
-  if (targetIdentity.artistKey) artistKeys.add(targetIdentity.artistKey);
+  if (target.identity.artistKey) artistKeys.add(target.identity.artistKey);
 
   for (const row of rows) {
-    const identity = identities.get(row);
-    if (!identity?.artistKey || identity.titleKey !== targetIdentity.titleKey) continue;
-    if (sameSource(target, row) || sameChartDirectory(target, row) || sameChartHash(target, row) || hasParentHashRelationship(target, row)) {
-      artistKeys.add(identity.artistKey);
+    if (!row.identity.artistKey) continue;
+    if (
+      samePreparedSource(target, row)
+      || samePreparedChartDirectory(target, row)
+      || samePreparedChartHash(target, row)
+      || hasPreparedParentHashRelationship(target, row)
+    ) {
+      artistKeys.add(row.identity.artistKey);
     }
   }
   return artistKeys;
 }
 
-function sameSource(a: TableChartRow, b: TableChartRow): boolean {
-  const aKeys = sourceKeys(a);
-  if (aKeys.size === 0) return false;
-  return [...sourceKeys(b)].some((key) => aKeys.has(key));
+function samePreparedSource(a: PreparedSongRow, b: PreparedSongRow): boolean {
+  return setsOverlap(preparedSourceKeys(a), preparedSourceKeys(b));
+}
+
+function preparedSourceKeys(row: PreparedSongRow): Set<string> {
+  return row.sourceKeys ??= sourceKeys(row.row);
+}
+
+function samePreparedChartDirectory(a: PreparedSongRow, b: PreparedSongRow): boolean {
+  const aDirectory = preparedChartDirectory(a);
+  return Boolean(aDirectory && aDirectory === preparedChartDirectory(b));
+}
+
+function preparedChartDirectory(row: PreparedSongRow): string {
+  return row.directory ??= chartDirectory(row.row.path);
+}
+
+function setsOverlap(a: Set<string>, b: Set<string>): boolean {
+  if (a.size === 0 || b.size === 0) return false;
+  const smaller = a.size <= b.size ? a : b;
+  const larger = a.size <= b.size ? b : a;
+  return [...smaller].some((value) => larger.has(value));
 }
 
 function sourceKeys(row: TableChartRow): Set<string> {
@@ -308,15 +402,26 @@ function sourceUrlKeys(rawValue: string): string[] {
   }
 }
 
-function sameChartDirectory(a: TableChartRow, b: TableChartRow): boolean {
-  const aDirectory = chartDirectory(a.path);
-  return Boolean(aDirectory && aDirectory === chartDirectory(b.path));
-}
-
 function chartDirectory(filePath: string): string {
   const normalized = filePath.replace(/\\/g, '/').toLowerCase();
   const separator = normalized.lastIndexOf('/');
   return separator < 0 ? '' : normalized.slice(0, separator);
+}
+
+function addPreparedRow(
+  map: Map<string, PreparedSongRow[]>,
+  key: string,
+  row: PreparedSongRow
+): void {
+  if (!key) return;
+  const rows = map.get(key) ?? [];
+  rows.push(row);
+  map.set(key, rows);
+}
+
+function addPreparedRows(target: Set<PreparedSongRow>, rows: PreparedSongRow[] | undefined): void {
+  if (!rows) return;
+  for (const row of rows) target.add(row);
 }
 
 function rowHashKeys(row: TableChartRow): string[] {

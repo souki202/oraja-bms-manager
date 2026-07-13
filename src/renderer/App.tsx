@@ -6,7 +6,7 @@ import type { AudioFolder, BgaFolder, ChartImportAnalysis, DirectoryNode, Duplic
 import type { ChartColumnFilter, ChartColumnFilters, ChartFilterCache, ChartFilterKey, UrlFilterMode } from '../shared/chartFilters';
 import { clearStatuses, countActiveColumnFilters, isColumnFilterActive, matchesChartFilters, matchesGlobalChartSearch, normalizeSearchQuery, prepareColumnFilters } from '../shared/chartFilters';
 import { countRedundantChartCopies, findDuplicateChartGroups } from '../shared/duplicateCharts';
-import { buildSimilarSearchRows, findSimilarRows, statusClass } from '../shared/domain';
+import { createSameSongSearchIndex, statusClass } from '../shared/domain';
 import { buildBmsPathExport, buildTableExport } from '../shared/exportTable';
 import { bokutachiGameForMode, buildStaticIrUrl, canOpenBokutachi, hasAnyIrTarget } from '../shared/ir';
 import type { IrTarget } from '../shared/ir';
@@ -67,6 +67,10 @@ export function App(): JSX.Element {
   );
   const visibleDuplicateGroups = useMemo(() => filterDuplicateGroups(duplicateGroups, searchText), [duplicateGroups, searchText]);
   const redundantCopyCount = useMemo(() => countRedundantChartCopies(duplicateGroups), [duplicateGroups]);
+  const sameSongIndex = useMemo(
+    () => state ? createSameSongSearchIndex(state.rows, state.libraryRows) : null,
+    [state]
+  );
 
   useEffect(() => {
     void load();
@@ -145,9 +149,9 @@ export function App(): JSX.Element {
   const visibleRows = useMemo(() => sortRows(filteredRows, sort), [filteredRows, sort]);
 
   const similarRows = useMemo(() => {
-    if (!state || !similarTarget) return [];
-    return sortRows(findSimilarRows(similarTarget, buildSimilarSearchRows(state.rows, state.libraryRows, similarTarget)), sort);
-  }, [state, similarTarget, sort]);
+    if (!sameSongIndex || !similarTarget) return [];
+    return sortRows(sameSongIndex.find(similarTarget), sort);
+  }, [sameSongIndex, similarTarget, sort]);
 
   const activeTable = activeView === 'charts' && !selectedBmsRoot ? state?.tables.find((table) => table.id === selectedTableId) ?? null : null;
 
