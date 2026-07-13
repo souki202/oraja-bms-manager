@@ -1,5 +1,11 @@
 import { describe, expect, it } from 'vitest';
-import { buildSimilarSearchRows, clearToStatus, findSimilarRows, normalizeTitleBase } from '../src/shared/domain';
+import {
+  buildSimilarSearchRows,
+  clearToStatus,
+  findSimilarRows,
+  normalizeArtistBase,
+  normalizeTitleBase
+} from '../src/shared/domain';
 import type { TableChartRow } from '../src/shared/types';
 
 describe('clearToStatus', () => {
@@ -56,6 +62,97 @@ describe('findSimilarRows', () => {
 
     expect(findSimilarRows(target, [target, blank]).map((item) => item.id)).toEqual(['a']);
   });
+
+  it('matches short titles after removing chart and visual credits from the artist', () => {
+    const target = row('hexagon', 'ニニ [Hexagon]', 'テヅカ × Qayo BGA: inukoro / obj.hex', 'NO SONG');
+    const original = row('original', 'ニニ', 'テヅカ × Qayo', 'CLEAR', { subtitle: '[SP ANOTHER]' });
+    const etude = row('etude', 'ニニ [Etude]', 'テヅカ × Qayo BGA: inukoro obj: И', 'NO SONG');
+    const differentArtist = row('different', 'ニニ [Another]', '別のアーティスト', 'NO SONG');
+
+    expect(findSimilarRows(target, [target, original, etude, differentArtist]).map((item) => item.id))
+      .toEqual(['hexagon', 'etude', 'original']);
+  });
+
+  it('does not mix songs that only share a title', () => {
+    const target = row('a', 'Same Name [ANOTHER]', 'First Artist obj:aaa', 'CLEAR');
+    const sameSong = row('b', 'Same Name [HYPER]', 'First Artist', 'NO SONG');
+    const otherSong = row('c', 'Same Name', 'Second Artist', 'NO SONG');
+
+    expect(findSimilarRows(target, [target, sameSong, otherSong]).map((item) => item.id)).toEqual(['a', 'b']);
+  });
+
+  it('does not use title prefixes or remove music-version suffixes', () => {
+    const target = row('a', 'hoge', 'Artist', 'CLEAR');
+    const euroMix = row('b', 'hoge -euro mix-', 'Artist', 'NO SONG');
+    const longerTitle = row('c', 'hoge extended journey', 'Artist', 'NO SONG');
+    const chartVariant = row('d', 'hoge -ANOTHER-', 'Artist', 'NO SONG');
+
+    expect(findSimilarRows(target, [target, euroMix, longerTitle, chartVariant]).map((item) => item.id))
+      .toEqual(['a', 'd']);
+  });
+
+  it('keeps featured performers as part of the musical artist identity', () => {
+    const target = row('a', 'Song [A]', 'Producer feat: 初音ミク obj:fuga', 'CLEAR');
+    const same = row('b', 'Song [H]', 'Producer feat: 初音ミク', 'NO SONG');
+    const differentSinger = row('c', 'Song [N]', 'Producer feat: 重音テト obj:bar', 'NO SONG');
+
+    expect(findSimilarRows(target, [target, same, differentSinger]).map((item) => item.id)).toEqual(['a', 'b']);
+  });
+
+  it('uses explicit parent hashes even when metadata differs', () => {
+    const target = row('a', 'Renamed Difference', 'Chart Author', 'NO SONG', { orgMd5: '0123456789abcdef0123456789abcdef' });
+    const parent = row('b', 'Original Song', 'Music Artist', 'CLEAR', { md5: '0123456789abcdef0123456789abcdef' });
+
+    expect(findSimilarRows(target, [target, parent]).map((item) => item.id)).toEqual(['a', 'b']);
+    expect(findSimilarRows(target, [target, parent])[1].matchReason).toBe('parent hash');
+  });
+
+  it('matches arbitrary dashed and unwrapped chart names without merging music mixes', () => {
+    const target = row('gaia', 'Air -GAIA-', 'SHIKI / obj.ぶんぺ～', 'NO SONG');
+    const god = row('god', 'Air -GOD-', 'SHIKI / black train', 'CLEAR');
+    const another = row('another', 'Air ANOTHER', 'SHIKI / rio', 'NO PLAY');
+    const original = row('original', 'Air', 'SHIKI', 'NO PLAY');
+    const musicMix = row('mix', 'Air -euro mix-', 'SHIKI', 'NO SONG');
+    const otherArtist = row('other', 'Air -HELL-', 'Other Artist', 'NO SONG');
+
+    expect(findSimilarRows(target, [target, god, another, original, musicMix, otherArtist]).map((item) => item.id))
+      .toEqual(['gaia', 'original', 'god', 'another']);
+  });
+
+  it('matches bracketed and parenthesized CHERRY DOLL chart names', () => {
+    const target = row('yamanashi', 'CHERRY DOLL [山梨]', 'カラフル・サウンズ・ポート obj:IBARAGI_YOSHIMI', 'NO SONG');
+    const imperial = row('imperial', 'CHERRY DOLL(Imperial Rose)', 'カラフル・サウンズ・ポート ＋ aya (Sequence)', 'CLEAR');
+    const normal = row('normal', 'CHERRY DOLL(Normal)', 'カラフル・サウンズ・ポート', 'NO PLAY');
+
+    expect(findSimilarRows(target, [target, imperial, normal]).map((item) => item.id))
+      .toEqual(['yamanashi', 'imperial', 'normal']);
+  });
+
+  it('uses a shared source to bridge inconsistent artist metadata for the same base title', () => {
+    const target = row('long', '3丁目14番地の仔猫 (5long+7keys+3mine)', '美月 正', 'NO SONG', {
+      url1: 'http://web.archive.org/web/20130427145910/http://tsubu.ath.cx/~ssry/music.htm'
+    });
+    const original = row('original', '3丁目14番地の仔猫 (7key)', '篠螺悠那', 'NO SONG', {
+      url1: 'http://tsubu.ath.cx/~ssry/'
+    });
+    const inferno = row('inferno', '3丁目14番地の仔猫 [INFERNO]', '篠螺悠那 / obj:M.H', 'NO SONG', {
+      url1: 'https://example.com/inferno'
+    });
+    const unrelated = row('unrelated', '3丁目14番地の仔猫 [OTHER]', 'Unrelated Artist', 'NO SONG', {
+      url1: 'https://example.com/other'
+    });
+
+    expect(findSimilarRows(target, [target, original, inferno, unrelated]).map((item) => item.id))
+      .toEqual(['long', 'original', 'inferno']);
+    expect(findSimilarRows(target, [target, original])[1].matchReason).toBe('title + source');
+  });
+
+  it('normalizes bare slash chart-author suffixes', () => {
+    const target = row('custom', '☆Traveling Sunstar☆ [7key ミ★★]', 'HOUJIROU/yokosuka', 'NO SONG');
+    const original = row('original', 'Traveling Sunstar [7key]', 'HOUJIROU', 'NO PLAY');
+
+    expect(findSimilarRows(target, [target, original]).map((item) => item.id)).toEqual(['custom', 'original']);
+  });
 });
 
 describe('normalizeTitleBase', () => {
@@ -69,6 +166,36 @@ describe('normalizeTitleBase', () => {
     expect(normalizeTitleBase('Title [ANOTHER]')).toBe('title');
     expect(normalizeTitleBase('Title (ANOTHER)')).toBe('title');
     expect(normalizeTitleBase("Strawberry Mint Chocolate [v('ω')v]")).toBe('strawberry mint chocolate');
+  });
+
+  it('only strips dashed suffixes that look like chart names', () => {
+    expect(normalizeTitleBase('ニニ -巫-')).toBe('ニニ');
+    expect(normalizeTitleBase('Air -GAIA-')).toBe('air');
+    expect(normalizeTitleBase('beyond the limit -abyss-')).toBe('beyond the limit');
+    expect(normalizeTitleBase('hoge -euro mix-')).toBe('hoge euro mix');
+    expect(normalizeTitleBase('hoge [2026 Remix]')).toBe('hoge 2026 remix');
+  });
+
+  it('strips arbitrary parenthesized chart names but keeps music versions', () => {
+    expect(normalizeTitleBase('CHERRY DOLL(Imperial Rose)')).toBe('cherry doll');
+    expect(normalizeTitleBase('3丁目14番地の仔猫 (5long+7keys+3mine)')).toBe('3丁目14番地の仔猫');
+    expect(normalizeTitleBase('Air ANOTHER')).toBe('air');
+    expect(normalizeTitleBase('Song (Acoustic Version)')).toBe('song acoustic version');
+  });
+});
+
+describe('normalizeArtistBase', () => {
+  it('removes chart, BGA, and illustration credits appended to an artist', () => {
+    expect(normalizeArtistBase('テヅカ × Qayo BGA: inukoro / obj.hex')).toBe('テヅカ × qayo');
+    expect(normalizeArtistBase('Artist/obj.matsu BGI: Visual')).toBe('artist');
+    expect(normalizeArtistBase('Artist Illust: Helper')).toBe('artist');
+    expect(normalizeArtistBase('SHIKI / black train')).toBe('shiki');
+    expect(normalizeArtistBase('Syatten #obj air')).toBe('syatten');
+    expect(normalizeArtistBase('カラフル・サウンズ・ポート ＋ aya (Sequence)')).toBe('カラフル・サウンズ・ポート');
+  });
+
+  it('does not remove musical featured-artist credits', () => {
+    expect(normalizeArtistBase('Producer feat: 初音ミク obj:fuga')).toBe('producer feat 初音ミク');
   });
 });
 
@@ -110,14 +237,14 @@ function row(
     tableUrl: '',
     level: patch.level ?? '★1',
     title,
-    subtitle: '',
+    subtitle: patch.subtitle ?? '',
     artist,
     genre: '',
-    md5: '',
+    md5: patch.md5 ?? '',
     sha256: patch.sha256 ?? id,
-    orgMd5: '',
-    url1: '',
-    url2: '',
+    orgMd5: patch.orgMd5 ?? '',
+    url1: patch.url1 ?? '',
+    url2: patch.url2 ?? '',
     ipfs: '',
     appendIpfs: '',
     mode: 7,
@@ -129,7 +256,7 @@ function row(
     songLevel: null,
     mainBpm: null,
     density: null,
-    path: '',
+    path: patch.path ?? '',
     folder: ''
   };
 }

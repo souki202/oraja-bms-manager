@@ -30,6 +30,16 @@ export function normalizeTitleBase(value: string): string {
   return normalizeTitleText(stripTrailingDifficultyName(value));
 }
 
+export function normalizeArtistBase(value: string): string {
+  const normalized = value.normalize('NFKC').replace(/\s+/g, ' ').trim();
+  const contributor = normalized.match(contributorCreditPattern);
+  let artist = contributor ? normalized.slice(0, contributor.index).trim() : normalized;
+  artist = artist.replace(sequenceCreditPattern, '').trim();
+  const slashIndex = artist.indexOf('/');
+  if (slashIndex >= 0) artist = artist.slice(0, slashIndex).trim();
+  return normalizeIdentityText(artist);
+}
+
 export function rowMatchesSearch(row: TableChartRow, query: string): boolean {
   const normalized = normalizeText(query);
   if (!normalized) return true;
@@ -51,11 +61,10 @@ export function rowMatchesSearch(row: TableChartRow, query: string): boolean {
 }
 
 export function findSimilarRows(target: TableChartRow, rows: TableChartRow[]): TableChartRow[] {
-  const targetTitle = normalizedTitle(target.title);
-  const targetArtist = normalizeText(target.artist);
-  const targetFull = `${targetTitle.text} ${targetArtist}`.trim();
+  const targetIdentity = songIdentity(target);
+  const rowIdentities = new Map(rows.map((row) => [row, songIdentity(row)]));
+  const relatedArtistKeys = relatedArtists(target, targetIdentity, rows, rowIdentities);
   const candidates: TableChartRow[] = [];
-  const canMatchOtherRows = Boolean(targetTitle.text || target.orgMd5 || target.md5);
 
   for (const row of rows) {
     let confidence = 0;
@@ -64,30 +73,31 @@ export function findSimilarRows(target: TableChartRow, rows: TableChartRow[]): T
     if (row.id === target.id) {
       confidence = 1;
       matchReason = 'selected chart';
-    } else if (!canMatchOtherRows) {
-      confidence = 0;
-    } else if (target.orgMd5 && (row.md5 === target.orgMd5 || row.orgMd5 === target.orgMd5)) {
+    } else if (sameChartHash(target, row)) {
+      confidence = 0.99;
+      matchReason = 'same chart hash';
+    } else if (hasParentHashRelationship(target, row)) {
       confidence = 0.98;
       matchReason = 'parent hash';
-    } else if (target.md5 && row.orgMd5 && row.orgMd5 === target.md5) {
-      confidence = 0.96;
-      matchReason = 'parent hash';
     } else {
-      const rowTitle = normalizedTitle(row.title);
-      const rowArtist = normalizeText(row.artist);
-      const rowFull = `${rowTitle.text} ${rowArtist}`.trim();
-
-      if (!rowTitle.text) {
-        confidence = 0;
-      } else if (targetFull && rowFull === targetFull) {
-        confidence = 0.94;
-        matchReason = 'title + artist';
-      } else if (sameNormalizedTitle(targetTitle, rowTitle) && targetArtist && rowArtist.includes(targetArtist)) {
-        confidence = 0.88;
-        matchReason = 'title + artist';
-      } else if (targetTitle.text.length > 4 && sameNormalizedTitle(targetTitle, rowTitle)) {
-        confidence = 0.8;
-        matchReason = 'title';
+      const rowIdentity = rowIdentities.get(row) ?? songIdentity(row);
+      if (targetIdentity.titleKey && targetIdentity.titleKey === rowIdentity.titleKey) {
+        if (sameSource(target, row)) {
+          confidence = 0.93;
+          matchReason = 'title + source';
+        } else if (targetIdentity.artistKey && targetIdentity.artistKey === rowIdentity.artistKey) {
+          confidence = targetIdentity.fullTitleKey === rowIdentity.fullTitleKey ? 0.95 : 0.92;
+          matchReason = 'title + artist';
+        } else if (rowIdentity.artistKey && relatedArtistKeys.has(rowIdentity.artistKey)) {
+          confidence = 0.88;
+          matchReason = 'title + related artist';
+        } else if (!targetIdentity.artistKey && !rowIdentity.artistKey) {
+          confidence = 0.78;
+          matchReason = 'title (artist unavailable)';
+        } else if (!targetIdentity.artistKey || !rowIdentity.artistKey) {
+          confidence = 0.7;
+          matchReason = 'title (one artist unavailable)';
+        }
       }
     }
 
@@ -124,43 +134,58 @@ export function buildSimilarSearchRows(
   return rows;
 }
 
-interface NormalizedTitle {
-  text: string;
-  key: string;
+interface SongIdentity {
+  fullTitleKey: string;
+  titleKey: string;
+  artistKey: string;
 }
 
-const wrappedDifficultyPatterns = [
-  /\s*(?:\[[^\]]+\]|【[^】]+】)\s*$/,
-  /\s+[‐‑‒–—―-]\s*[^‐‑‒–—―-]+\s*[‐‑‒–—―-]\s*$/
-];
+const squareTitleSuffixPattern = /\s*(?:\[([^\r\n]+?)\]|【([^【】]+)】|\{([^{}]+)\}|〈([^〈〉]+)〉|《([^《》]+)》)\s*$/u;
+const dashTitleSuffixPattern = /\s+[‐‑‒–—―-]\s*([^‐‑‒–—―-]+?)\s*[‐‑‒–—―-]\s*$/u;
+const unwrappedDifficultyPattern = /\s+(?:(?:sp|dp)\s*)?(?:another|hyper|normal|insane|easy|hard|ex|extra|maniac|lunatic|beginner|light|master)\+?\s*$/iu;
+const contributorCreditPattern = /(?:^|[\s/|;,[({#])(?:obj(?:ect(?:ed)?)?|noter|譜面|差分|bga|bgi|movie|illust(?:ration)?)(?=\s*(?::|：|\.|@|=|by\b)|\s|$)/iu;
+const sequenceCreditPattern = /\s*(?:\+|\/)\s*[^+/]*\(\s*(?:sequence|obj(?:ect)?|noter|chart)\s*\)\s*$/iu;
+const versionSuffixPattern = /\b(?:re?mix|mix|edit|version|ver\.?|arrange|bootleg|cover|original|radio|extended|live|vocal|instrumental|acoustic|short|long|full|club)\b/i;
 
-function normalizedTitle(value: string): NormalizedTitle {
-  const text = normalizeTitleBase(value);
-  return { text, key: titleKey(text) };
-}
-
-function sameNormalizedTitle(a: NormalizedTitle, b: NormalizedTitle): boolean {
-  return a.text === b.text || (!!a.key && a.key === b.key);
+function songIdentity(row: TableChartRow): SongIdentity {
+  const fullTitle = `${row.title} ${row.subtitle}`.trim();
+  return {
+    fullTitleKey: titleKey(normalizeTitleText(fullTitle)),
+    titleKey: titleKey(normalizeTitleBase(fullTitle)),
+    artistKey: titleKey(normalizeArtistBase(row.artist))
+  };
 }
 
 function stripTrailingDifficultyName(value: string): string {
   let title = value.normalize('NFKC').trim();
-  let changed = true;
-
-  while (changed) {
-    changed = false;
-    for (const pattern of wrappedDifficultyPatterns) {
-      const next = title.replace(pattern, '').trim();
-      if (next !== title) {
-        title = next;
-        changed = true;
+  while (true) {
+    const squareSuffix = title.match(squareTitleSuffixPattern);
+    if (squareSuffix) {
+      const suffix = squareSuffix.slice(1).find(Boolean) ?? '';
+      if (!versionSuffixPattern.test(normalizeTitleText(suffix))) {
+        title = title.slice(0, squareSuffix.index).trim();
+        continue;
       }
     }
-  }
 
-  const parenthesized = title.match(/\s*\(([^()]*)\)\s*$/);
-  if (parenthesized && isLikelyDifficultyName(parenthesized[1])) {
-    title = title.slice(0, parenthesized.index).trim();
+    const parenthesized = title.match(/\s*\(([^()]*)\)\s*$/u);
+    if (parenthesized && isRemovableChartSuffix(parenthesized[1])) {
+      title = title.slice(0, parenthesized.index).trim();
+      continue;
+    }
+
+    const dashed = title.match(dashTitleSuffixPattern);
+    if (dashed && isLikelyDashedDifficultyName(dashed[1])) {
+      title = title.slice(0, dashed.index).trim();
+      continue;
+    }
+
+    const withoutUnwrappedDifficulty = title.replace(unwrappedDifficultyPattern, '').trim();
+    if (withoutUnwrappedDifficulty !== title) {
+      title = withoutUnwrappedDifficulty;
+      continue;
+    }
+    break;
   }
 
   return title;
@@ -181,14 +206,117 @@ function titleKey(value: string): string {
   return value.replace(/\s+/g, '');
 }
 
-function isLikelyDifficultyName(value: string): boolean {
+function isLikelyDashedDifficultyName(value: string): boolean {
+  return isRemovableChartSuffix(value);
+}
+
+function isRemovableChartSuffix(value: string): boolean {
   const normalized = normalizeTitleText(value);
-  if (!normalized) return false;
-  if (/^(sp|dp|another|hyper|normal|insane|easy|hard|ex|mx|maniac|lunatic|beginner|master|stella|sl|sabun)\b/.test(normalized)) {
-    return true;
+  return Boolean(normalized) && !versionSuffixPattern.test(normalized);
+}
+
+function normalizeIdentityText(value: string): string {
+  return value
+    .normalize('NFKC')
+    .toLowerCase()
+    .replace(/[[\]【】()（）{}〈〉《》]/g, ' ')
+    .replace(/[‐‑‒–—―_#:：;,.+\\/]+/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim();
+}
+
+function sameChartHash(a: TableChartRow, b: TableChartRow): boolean {
+  return Boolean(
+    (a.sha256 && b.sha256 && a.sha256.toLowerCase() === b.sha256.toLowerCase())
+    || (a.md5 && b.md5 && a.md5.toLowerCase() === b.md5.toLowerCase())
+  );
+}
+
+function hasParentHashRelationship(a: TableChartRow, b: TableChartRow): boolean {
+  const aMd5 = a.md5.toLowerCase();
+  const bMd5 = b.md5.toLowerCase();
+  const aParents = parentHashes(a);
+  const bParents = parentHashes(b);
+  if (aMd5 && bParents.has(aMd5)) return true;
+  if (bMd5 && aParents.has(bMd5)) return true;
+  if (a.tableName === 'BMS Path' || b.tableName === 'BMS Path') return false;
+  const aPrimaryParents = primaryParentHashes(a);
+  const bPrimaryParents = primaryParentHashes(b);
+  return [...aPrimaryParents].some((hash) => bPrimaryParents.has(hash));
+}
+
+function parentHashes(row: TableChartRow): Set<string> {
+  const values = [row.orgMd5, ...(row.orgMd5s ?? [])];
+  const hashes = values.flatMap((value) => String(value ?? '').toLowerCase().match(/[a-f0-9]{32}/g) ?? []);
+  return new Set(hashes);
+}
+
+function primaryParentHashes(row: TableChartRow): Set<string> {
+  return new Set(String(row.orgMd5 ?? '').toLowerCase().match(/[a-f0-9]{32}/g) ?? []);
+}
+
+function relatedArtists(
+  target: TableChartRow,
+  targetIdentity: SongIdentity,
+  rows: TableChartRow[],
+  identities: Map<TableChartRow, SongIdentity>
+): Set<string> {
+  const artistKeys = new Set<string>();
+  if (targetIdentity.artistKey) artistKeys.add(targetIdentity.artistKey);
+
+  for (const row of rows) {
+    const identity = identities.get(row);
+    if (!identity?.artistKey || identity.titleKey !== targetIdentity.titleKey) continue;
+    if (sameSource(target, row) || sameChartDirectory(target, row) || sameChartHash(target, row) || hasParentHashRelationship(target, row)) {
+      artistKeys.add(identity.artistKey);
+    }
   }
-  if (/^(a|h|n|e|b|i|l|ex)$/i.test(value.trim())) return true;
-  return !/\s/.test(normalized) && normalized.length <= 16 && !/^[a-z0-9]+$/i.test(normalized);
+  return artistKeys;
+}
+
+function sameSource(a: TableChartRow, b: TableChartRow): boolean {
+  const aKeys = sourceKeys(a);
+  if (aKeys.size === 0) return false;
+  return [...sourceKeys(b)].some((key) => aKeys.has(key));
+}
+
+function sourceKeys(row: TableChartRow): Set<string> {
+  return new Set([row.url1, row.url2].flatMap(sourceUrlKeys));
+}
+
+function sourceUrlKeys(rawValue: string): string[] {
+  if (!rawValue) return [];
+  let value = rawValue.replace(/&amp;/gi, '&').trim();
+  const archived = value.match(/^https?:\/\/web\.archive\.org\/web\/[^/]+\/(https?:\/\/.+)$/i);
+  if (archived) value = archived[1];
+
+  try {
+    const url = new URL(value);
+    const host = url.hostname.toLowerCase().replace(/^www\./, '');
+    const pathname = url.pathname.replace(/\/{2,}/g, '/').replace(/\/$/, '') || '/';
+    const exact = `url:${host}${pathname}${url.search}`.toLowerCase();
+    const keys = [exact];
+    if (/\.(?:html?|shtml?)$/i.test(pathname)) {
+      const separator = pathname.lastIndexOf('/');
+      keys.push(`dir:${host}${pathname.slice(0, separator + 1)}`.toLowerCase());
+    } else if (url.pathname.endsWith('/')) {
+      keys.push(`dir:${host}${pathname}/`.toLowerCase());
+    }
+    return keys;
+  } catch {
+    return [];
+  }
+}
+
+function sameChartDirectory(a: TableChartRow, b: TableChartRow): boolean {
+  const aDirectory = chartDirectory(a.path);
+  return Boolean(aDirectory && aDirectory === chartDirectory(b.path));
+}
+
+function chartDirectory(filePath: string): string {
+  const normalized = filePath.replace(/\\/g, '/').toLowerCase();
+  const separator = normalized.lastIndexOf('/');
+  return separator < 0 ? '' : normalized.slice(0, separator);
 }
 
 function rowHashKeys(row: TableChartRow): string[] {
