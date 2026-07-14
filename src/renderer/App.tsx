@@ -29,6 +29,9 @@ type ContextMenuState = {
 
 type FilterMenuState = { key: SortKey; x: number; y: number } | null;
 type ActiveView = 'charts' | 'global-search' | 'duplicates' | 'audio' | 'bga' | 'missing-audio';
+type ToastType = 'info' | 'success' | 'error';
+type ToastState = { message: string; type: ToastType } | null;
+type ToastHandler = (message: string, type?: ToastType) => void;
 
 const editorVersion = String(packageJson.version ?? '');
 
@@ -47,7 +50,7 @@ export function App(): JSX.Element {
   const [filterMenu, setFilterMenu] = useState<FilterMenuState>(null);
   const [columnFilters, setColumnFilters] = useState<ChartColumnFilters>({});
   const [similarTarget, setSimilarTarget] = useState<TableChartRow | null>(null);
-  const [toastMessage, setToastMessage] = useState('');
+  const [toast, setToast] = useState<ToastState>(null);
   const [isDragOver, setIsDragOver] = useState(false);
   const [importAnalysis, setImportAnalysis] = useState<ChartImportAnalysis | null>(null);
   const [selectedImportCandidateId, setSelectedImportCandidateId] = useState('');
@@ -182,7 +185,7 @@ export function App(): JSX.Element {
     try {
       await saveSettings({ reusePreviousImportDestination: value });
     } catch (error) {
-      showToast(error instanceof Error ? error.message : String(error));
+      showToast(error instanceof Error ? error.message : String(error), 'error');
     } finally {
       setIsSettingsSaving(false);
     }
@@ -318,7 +321,7 @@ export function App(): JSX.Element {
     if (url) {
       void window.managerApi.openExternal(url);
     } else if (target === 'bokutachi') {
-      showToast('bokutachiに登録された譜面が見つかりませんでした。');
+      showToast('bokutachiに登録された譜面が見つかりませんでした。', 'error');
     }
   }
 
@@ -349,7 +352,7 @@ export function App(): JSX.Element {
       .map((file) => window.managerApi.getPathForFile(file))
       .filter(Boolean);
     if (paths.length === 0) {
-      showToast('No local file path was found in the dropped item.');
+      showToast('No local file path was found in the dropped item.', 'error');
       return;
     }
 
@@ -358,7 +361,7 @@ export function App(): JSX.Element {
     try {
       const analyzed = await window.managerApi.analyzeDroppedChart(paths);
       if (!analyzed.ok) {
-        showToast(analyzed.message);
+        showToast(analyzed.message, 'error');
         return;
       }
       const automaticDestination = state?.settings.reusePreviousImportDestination && analyzed.dropped
@@ -381,16 +384,16 @@ export function App(): JSX.Element {
             destinationDirectory: automaticDestination
           };
           setImportAnalysis(null);
-          showToast(automaticImportSuccessMessage(result, automaticDestination));
+          showToast(automaticImportSuccessMessage(result, automaticDestination), 'success');
           return;
         }
-        showToast(`Automatic import to the previous destination failed: ${result.message}`);
+        showToast(`Automatic import to the previous destination failed: ${result.message}`, 'error');
       } catch (error) {
-        showToast(`Automatic import to the previous destination failed: ${error instanceof Error ? error.message : String(error)}`);
+        showToast(`Automatic import to the previous destination failed: ${error instanceof Error ? error.message : String(error)}`, 'error');
       }
       setImportAnalysis(analyzed);
     } catch (error) {
-      showToast(error instanceof Error ? error.message : String(error));
+      showToast(error instanceof Error ? error.message : String(error), 'error');
     } finally {
       setIsImportBusy(false);
       setImportBusyMessage('');
@@ -409,7 +412,7 @@ export function App(): JSX.Element {
         sourcePaths: importAnalysis.sourcePaths,
         destinationDirectory: candidate.destinationDirectory
       });
-      showToast(result.message);
+      showToast(result.message, result.ok ? 'success' : 'error');
       if (result.ok) {
         previousImportRef.current = {
           dropped: importAnalysis.dropped,
@@ -418,7 +421,7 @@ export function App(): JSX.Element {
         setImportAnalysis(null);
       }
     } catch (error) {
-      showToast(error instanceof Error ? error.message : String(error));
+      showToast(error instanceof Error ? error.message : String(error), 'error');
     } finally {
       setIsImportBusy(false);
       setImportBusyMessage('');
@@ -429,7 +432,7 @@ export function App(): JSX.Element {
     const directories = uniquePaths(sourceDirectories);
     const sourceOnlyDirectories = directories.filter((directory) => !samePathText(directory, targetDirectory));
     if (directories.length < 2 || sourceOnlyDirectories.length === 0) {
-      showToast('Select at least one source directory in addition to the merge target.');
+      showToast('Select at least one source directory in addition to the merge target.', 'error');
       return;
     }
 
@@ -448,13 +451,13 @@ export function App(): JSX.Element {
     setMergeBusyMessage('Merging duplicate directories...');
     try {
       const result = await window.managerApi.mergeDuplicateDirectories({ targetDirectory, sourceDirectories: directories });
-      showToast(result.message);
+      showToast(result.message, result.ok ? 'success' : 'error');
       if (result.ok) {
         const mergedGroupIds = automaticallyMergedDuplicateGroupIds(duplicateGroups, targetDirectory, directories);
         setMergedDuplicateGroupIds((current) => new Set([...current, ...mergedGroupIds]));
       }
     } catch (error) {
-      showToast(error instanceof Error ? error.message : String(error));
+      showToast(error instanceof Error ? error.message : String(error), 'error');
     } finally {
       setMergeBusyGroupId('');
       setMergeBusyMessage('');
@@ -594,7 +597,7 @@ export function App(): JSX.Element {
               <button onClick={() => setSimilarTarget(null)}>Close</button>
             </div>
             <div className="similar-target">{similarTarget.title}</div>
-            <ChartTable rows={similarRows} compact sort={sort} columnFilters={columnFilters} onSort={toggleSort} onFilterClick={openFilterMenu} onContextMenu={openContextMenu} />
+            <ChartTable rows={similarRows} compact scrollResetKey={similarTarget.id} sort={sort} columnFilters={columnFilters} onSort={toggleSort} onFilterClick={openFilterMenu} onContextMenu={openContextMenu} />
           </aside>
         )}
       </div>
@@ -678,21 +681,29 @@ export function App(): JSX.Element {
         </div>
       )}
 
-      {toastMessage && <div className="toast-message" role="status" aria-live="polite">{toastMessage}</div>}
+      {toast && (
+        <div
+          className={`toast-message ${toast.type}`}
+          role={toast.type === 'error' ? 'alert' : 'status'}
+          aria-live={toast.type === 'error' ? 'assertive' : 'polite'}
+        >
+          {toast.message}
+        </div>
+      )}
     </div>
   );
 
-  function showToast(message: string): void {
+  function showToast(message: string, type: ToastType = 'info'): void {
     if (toastTimeoutRef.current !== null) window.clearTimeout(toastTimeoutRef.current);
-    setToastMessage(message);
+    setToast({ message, type });
     toastTimeoutRef.current = window.setTimeout(() => {
-      setToastMessage('');
+      setToast(null);
       toastTimeoutRef.current = null;
     }, 3500);
   }
 }
 
-function MissingAudioView({ onMessage, onBusyChange }: { onMessage(message: string): void; onBusyChange(busy: boolean): void }): JSX.Element {
+function MissingAudioView({ onMessage, onBusyChange }: { onMessage: ToastHandler; onBusyChange(busy: boolean): void }): JSX.Element {
   const [charts, setCharts] = useState<MissingAudioChart[]>([]);
   const [loading, setLoading] = useState(false);
   const [query, setQuery] = useState('');
@@ -711,7 +722,7 @@ function MissingAudioView({ onMessage, onBusyChange }: { onMessage(message: stri
       setScannedDirectories(update.scannedDirectories);
       if (update.done) setCharts(update.charts);
       else if (update.charts.length) setCharts((current) => [...current, ...update.charts]);
-      if (update.error) onMessage(update.error);
+      if (update.error) onMessage(update.error, 'error');
       if (update.done) { setLoading(false); onBusyChange(false); }
     });
     void startScan();
@@ -722,7 +733,7 @@ function MissingAudioView({ onMessage, onBusyChange }: { onMessage(message: stri
     if (scanIdRef.current) await window.managerApi.cancelMissingAudioScan(scanIdRef.current);
     setCharts([]); setScannedCharts(0); setScannedDirectories(0); setLoading(true); onBusyChange(true);
     try { scanIdRef.current = await window.managerApi.startMissingAudioScan(); }
-    catch (error) { setLoading(false); onBusyChange(false); onMessage(error instanceof Error ? error.message : String(error)); }
+    catch (error) { setLoading(false); onBusyChange(false); onMessage(error instanceof Error ? error.message : String(error), 'error'); }
   }
 
   return <div className="audio-conversion missing-audio-view">
@@ -745,7 +756,7 @@ function MissingAudioView({ onMessage, onBusyChange }: { onMessage(message: stri
   </div>;
 }
 
-function AudioConversionView({ onMessage, onConversionBusyChange }: { onMessage(message: string): void; onConversionBusyChange(busy: boolean): void }): JSX.Element {
+function AudioConversionView({ onMessage, onConversionBusyChange }: { onMessage: ToastHandler; onConversionBusyChange(busy: boolean): void }): JSX.Element {
   const [folders, setFolders] = useState<AudioFolder[]>([]);
   const [loading, setLoading] = useState(true);
   const [scannedDirectories, setScannedDirectories] = useState(0);
@@ -764,7 +775,7 @@ function AudioConversionView({ onMessage, onConversionBusyChange }: { onMessage(
     const unsubscribe = window.managerApi.onAudioFolderScanUpdate((update) => {
       if (update.scanId !== scanIdRef.current) return;
       if (update.error) {
-        onMessage(update.error);
+        onMessage(update.error, 'error');
         setLoading(false);
         return;
       }
@@ -799,7 +810,7 @@ function AudioConversionView({ onMessage, onConversionBusyChange }: { onMessage(
     try {
       scanIdRef.current = await window.managerApi.startAudioFolderScan();
     } catch (error) {
-      onMessage(error instanceof Error ? error.message : String(error));
+      onMessage(error instanceof Error ? error.message : String(error), 'error');
       setLoading(false);
     }
   }
@@ -809,14 +820,14 @@ function AudioConversionView({ onMessage, onConversionBusyChange }: { onMessage(
     setBusyPath(folder.path);
     try {
       const result = await window.managerApi.convertAudioFolder(folder.path);
-      onMessage(result.message);
+      onMessage(result.message, result.ok ? 'success' : 'error');
       if (result.ok) {
         folderPathsRef.current.delete(folder.path);
         setFolders((previous) => previous.filter((item) => item.path !== folder.path));
       }
       return result.ok;
     } catch (error) {
-      onMessage(`${folder.name}: ${error instanceof Error ? error.message : String(error)}`);
+      onMessage(`${folder.name}: ${error instanceof Error ? error.message : String(error)}`, 'error');
       return false;
     } finally {
       setBusyPath('');
@@ -850,7 +861,8 @@ function AudioConversionView({ onMessage, onConversionBusyChange }: { onMessage(
       await reload();
       onMessage(stopped
         ? `${succeeded} / ${batch.length} folders converted${needsAttention ? `, ${needsAttention} need attention` : ''}. Stopped after the current folder finished.`
-        : `${succeeded} / ${batch.length} folders converted${needsAttention ? `, ${needsAttention} need attention` : ''}.`);
+        : `${succeeded} / ${batch.length} folders converted${needsAttention ? `, ${needsAttention} need attention` : ''}.`,
+      stopped ? 'info' : needsAttention ? 'error' : 'success');
     }
   }
 
@@ -891,7 +903,7 @@ function AudioConversionView({ onMessage, onConversionBusyChange }: { onMessage(
   );
 }
 
-function BgaCleanupView({ onMessage, onCleanupBusyChange }: { onMessage(message: string): void; onCleanupBusyChange(busy: boolean): void }): JSX.Element {
+function BgaCleanupView({ onMessage, onCleanupBusyChange }: { onMessage: ToastHandler; onCleanupBusyChange(busy: boolean): void }): JSX.Element {
   const [folders, setFolders] = useState<BgaFolder[]>([]);
   const [loading, setLoading] = useState(true);
   const [scannedDirectories, setScannedDirectories] = useState(0);
@@ -911,7 +923,7 @@ function BgaCleanupView({ onMessage, onCleanupBusyChange }: { onMessage(message:
     const unsubscribe = window.managerApi.onBgaFolderScanUpdate((update) => {
       if (update.scanId !== scanIdRef.current) return;
       if (update.error) {
-        onMessage(update.error);
+        onMessage(update.error, 'error');
         setLoading(false);
         return;
       }
@@ -946,7 +958,7 @@ function BgaCleanupView({ onMessage, onCleanupBusyChange }: { onMessage(message:
     try {
       scanIdRef.current = await window.managerApi.startBgaFolderScan();
     } catch (error) {
-      onMessage(error instanceof Error ? error.message : String(error));
+      onMessage(error instanceof Error ? error.message : String(error), 'error');
       setLoading(false);
     }
   }
@@ -956,14 +968,14 @@ function BgaCleanupView({ onMessage, onCleanupBusyChange }: { onMessage(message:
     setBusyPath(folder.path);
     try {
       const result = await window.managerApi.cleanupBgaFolder(folder.path);
-      onMessage(result.message);
+      onMessage(result.message, result.ok ? 'success' : 'error');
       if (result.ok) {
         folderPathsRef.current.delete(folder.path);
         setFolders((previous) => previous.filter((item) => item.path !== folder.path));
       }
       return result.ok;
     } catch (error) {
-      onMessage(`${folder.name}: ${error instanceof Error ? error.message : String(error)}`);
+      onMessage(`${folder.name}: ${error instanceof Error ? error.message : String(error)}`, 'error');
       return false;
     } finally {
       setBusyPath('');
@@ -997,7 +1009,8 @@ function BgaCleanupView({ onMessage, onCleanupBusyChange }: { onMessage(message:
       await reload();
       onMessage(stopped
         ? `${succeeded} / ${batch.length} folders cleaned${needsAttention ? `, ${needsAttention} need attention` : ''}. Stopped after the current folder finished.`
-        : `${succeeded} / ${batch.length} folders cleaned${needsAttention ? `, ${needsAttention} need attention` : ''}.`);
+        : `${succeeded} / ${batch.length} folders cleaned${needsAttention ? `, ${needsAttention} need attention` : ''}.`,
+      stopped ? 'info' : needsAttention ? 'error' : 'success');
     }
   }
 
@@ -1375,7 +1388,7 @@ function summarizeBgaDuplicates(folder: BgaFolder): string {
   return `${names.join(', ')}${folder.duplicates.length > names.length ? ', ...' : ''}`;
 }
 
-function ChartTable({ rows, compact = false, sort, columnFilters, onSort, onFilterClick, onContextMenu }: { rows: TableChartRow[]; compact?: boolean; sort: SortState; columnFilters: ChartColumnFilters; onSort(key: SortKey): void; onFilterClick(event: React.MouseEvent, key: SortKey): void; onContextMenu(event: React.MouseEvent, row: TableChartRow): void }): JSX.Element {
+function ChartTable({ rows, compact = false, scrollResetKey, sort, columnFilters, onSort, onFilterClick, onContextMenu }: { rows: TableChartRow[]; compact?: boolean; scrollResetKey?: string; sort: SortState; columnFilters: ChartColumnFilters; onSort(key: SortKey): void; onFilterClick(event: React.MouseEvent, key: SortKey): void; onContextMenu(event: React.MouseEvent, row: TableChartRow): void }): JSX.Element {
   const parentRef = useRef<HTMLDivElement>(null);
   const [columnWidths, setColumnWidths] = useState<Record<SortKey, number>>(() => createColumnWidthState());
   const visibleColumns = chartColumns.filter((column) => !(compact && (column.key === 'tableName' || column.key === 'path')));
@@ -1390,6 +1403,10 @@ function ChartTable({ rows, compact = false, sort, columnFilters, onSort, onFilt
   const virtualRows = rowVirtualizer.getVirtualItems();
   const paddingTop = virtualRows.length > 0 ? virtualRows[0].start : 0;
   const paddingBottom = virtualRows.length > 0 ? rowVirtualizer.getTotalSize() - virtualRows[virtualRows.length - 1].end : 0;
+
+  useLayoutEffect(() => {
+    if (scrollResetKey !== undefined && parentRef.current) parentRef.current.scrollTop = 0;
+  }, [scrollResetKey]);
 
   function startColumnResize(event: React.PointerEvent<HTMLSpanElement>, column: TableColumn): void {
     event.preventDefault();
