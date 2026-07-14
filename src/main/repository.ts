@@ -68,7 +68,8 @@ const defaultSettings: AppSettings = {
   beatorajaRoot: '',
   selectedPlayerId: 'player1',
   searchText: '',
-  selectedTableId: null
+  selectedTableId: null,
+  reusePreviousImportDestination: true
 };
 
 const chartFileExtensions = new Set(['.bms', '.bme', '.bml', '.pms', '.bmson']);
@@ -165,8 +166,14 @@ export class ManagerRepository {
     const next = { ...current, ...patch };
     await fs.mkdir(path.dirname(this.settingsPath), { recursive: true });
     await fs.writeFile(this.settingsPath, JSON.stringify(next, null, 2), 'utf8');
-    this.stateCache = null;
-    this.importMatcherCache = null;
+    const dataSourceChanged = next.beatorajaRoot !== current.beatorajaRoot
+      || next.selectedPlayerId !== current.selectedPlayerId;
+    if (dataSourceChanged) {
+      this.stateCache = null;
+      this.importMatcherCache = null;
+    } else if (this.stateCache) {
+      this.stateCache = { ...this.stateCache, settings: next };
+    }
     return next;
   }
 

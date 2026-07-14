@@ -46,8 +46,7 @@ function createWindow(): void {
 ipcMain.handle('state:load', () => repository.loadState());
 
 ipcMain.handle('settings:save', async (_event, patch: Partial<AppSettings>) => {
-  await repository.saveSettings(patch);
-  return repository.loadState();
+  return repository.saveSettings(patch);
 });
 
 ipcMain.handle('settings:choose-root', async () => {

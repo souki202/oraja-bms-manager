@@ -3,6 +3,7 @@ export interface AppSettings {
   selectedPlayerId: string;
   searchText: string;
   selectedTableId: string | null;
+  reusePreviousImportDestination: boolean;
 }
 
 export interface BeatorajaConfigSummary {

@@ -8,6 +8,8 @@ import { clearStatuses, countActiveColumnFilters, isColumnFilterActive, matchesC
 import { countRedundantChartCopies, findDuplicateChartGroups } from '../shared/duplicateCharts';
 import { createSameSongSearchIndex, statusClass } from '../shared/domain';
 import { buildBmsPathExport, buildTableExport } from '../shared/exportTable';
+import { automaticImportSuccessMessage, previousImportDestinationFor } from '../shared/importReuse';
+import type { PreviousChartImport } from '../shared/importReuse';
 import { bokutachiGameForMode, buildStaticIrUrl, canOpenBokutachi, hasAnyIrTarget } from '../shared/ir';
 import type { IrTarget } from '../shared/ir';
 import { buildRowsAsync } from './asyncRows';
@@ -51,12 +53,15 @@ export function App(): JSX.Element {
   const [selectedImportCandidateId, setSelectedImportCandidateId] = useState('');
   const [isImportBusy, setIsImportBusy] = useState(false);
   const [importBusyMessage, setImportBusyMessage] = useState('');
+  const [isSettingsOpen, setIsSettingsOpen] = useState(false);
+  const [isSettingsSaving, setIsSettingsSaving] = useState(false);
   const [mergeBusyGroupId, setMergeBusyGroupId] = useState('');
   const [mergeBusyMessage, setMergeBusyMessage] = useState('');
   const [isAudioConversionBusy, setIsAudioConversionBusy] = useState(false);
   const [hasOpenedMissingAudio, setHasOpenedMissingAudio] = useState(false);
   const [mergedDuplicateGroupIds, setMergedDuplicateGroupIds] = useState<Set<string>>(new Set());
   const toastTimeoutRef = useRef<number | null>(null);
+  const previousImportRef = useRef<PreviousChartImport | null>(null);
 
   const rowFilterCache = useMemo<ChartFilterCache>(() => new WeakMap(), [state]);
   const preparedColumnFilters = useMemo(() => prepareColumnFilters(columnFilters), [columnFilters]);
@@ -67,9 +72,11 @@ export function App(): JSX.Element {
   );
   const visibleDuplicateGroups = useMemo(() => filterDuplicateGroups(duplicateGroups, searchText), [duplicateGroups, searchText]);
   const redundantCopyCount = useMemo(() => countRedundantChartCopies(duplicateGroups), [duplicateGroups]);
+  const tableRows = state?.rows;
+  const libraryRows = state?.libraryRows;
   const sameSongIndex = useMemo(
-    () => state ? createSameSongSearchIndex(state.rows, state.libraryRows) : null,
-    [state]
+    () => tableRows && libraryRows ? createSameSongSearchIndex(tableRows, libraryRows) : null,
+    [tableRows, libraryRows]
   );
 
   useEffect(() => {
@@ -98,9 +105,13 @@ export function App(): JSX.Element {
     setLoading(false);
   }
 
-  async function saveSettings(patch: Parameters<typeof window.managerApi.saveSettings>[0]): Promise<void> {
-    const next = await window.managerApi.saveSettings(patch);
-    setState(next);
+  async function saveSettings(patch: Parameters<typeof window.managerApi.saveSettings>[0], reloadData = false): Promise<void> {
+    const settings = await window.managerApi.saveSettings(patch);
+    if (reloadData) {
+      setState(await window.managerApi.loadState());
+    } else {
+      setState((current) => current ? { ...current, settings } : current);
+    }
   }
 
   const sortedTables = useMemo(() => sortTables(state?.tables ?? []), [state]);
@@ -158,12 +169,23 @@ export function App(): JSX.Element {
   async function chooseRoot(): Promise<void> {
     if (isAudioConversionBusy) return;
     const root = await window.managerApi.chooseRoot();
-    if (root) await saveSettings({ beatorajaRoot: root });
+    if (root) await saveSettings({ beatorajaRoot: root }, true);
   }
 
   async function selectPlayer(playerId: string): Promise<void> {
     if (isAudioConversionBusy) return;
-    await saveSettings({ selectedPlayerId: playerId });
+    await saveSettings({ selectedPlayerId: playerId }, true);
+  }
+
+  async function setReusePreviousImportDestination(value: boolean): Promise<void> {
+    setIsSettingsSaving(true);
+    try {
+      await saveSettings({ reusePreviousImportDestination: value });
+    } catch (error) {
+      showToast(error instanceof Error ? error.message : String(error));
+    } finally {
+      setIsSettingsSaving(false);
+    }
   }
 
   async function selectTable(tableId: string | null): Promise<void> {
@@ -319,7 +341,7 @@ export function App(): JSX.Element {
   async function handleDrop(event: React.DragEvent): Promise<void> {
     event.preventDefault();
     setIsDragOver(false);
-    if (isAudioConversionBusy) return;
+    if (isAudioConversionBusy || isImportBusy) return;
     setContextMenu(null);
     setFilterMenu(null);
 
@@ -334,12 +356,39 @@ export function App(): JSX.Element {
     setIsImportBusy(true);
     setImportBusyMessage('Searching destination...');
     try {
-      const analysis = await window.managerApi.analyzeDroppedChart(paths);
-      if (!analysis.ok) {
-        showToast(analysis.message);
+      const analyzed = await window.managerApi.analyzeDroppedChart(paths);
+      if (!analyzed.ok) {
+        showToast(analyzed.message);
         return;
       }
-      setImportAnalysis(analysis);
+      const automaticDestination = state?.settings.reusePreviousImportDestination && analyzed.dropped
+        ? previousImportDestinationFor(analyzed.dropped, previousImportRef.current)
+        : null;
+      if (!automaticDestination || !analyzed.dropped) {
+        setImportAnalysis(analyzed);
+        return;
+      }
+
+      setImportBusyMessage('Same song detected. Importing to the previous destination...');
+      try {
+        const result = await window.managerApi.importDroppedChart({
+          sourcePaths: analyzed.sourcePaths,
+          destinationDirectory: automaticDestination
+        });
+        if (result.ok) {
+          previousImportRef.current = {
+            dropped: analyzed.dropped,
+            destinationDirectory: automaticDestination
+          };
+          setImportAnalysis(null);
+          showToast(automaticImportSuccessMessage(result, automaticDestination));
+          return;
+        }
+        showToast(`Automatic import to the previous destination failed: ${result.message}`);
+      } catch (error) {
+        showToast(`Automatic import to the previous destination failed: ${error instanceof Error ? error.message : String(error)}`);
+      }
+      setImportAnalysis(analyzed);
     } catch (error) {
       showToast(error instanceof Error ? error.message : String(error));
     } finally {
@@ -362,6 +411,10 @@ export function App(): JSX.Element {
       });
       showToast(result.message);
       if (result.ok) {
+        previousImportRef.current = {
+          dropped: importAnalysis.dropped,
+          destinationDirectory: candidate.destinationDirectory
+        };
         setImportAnalysis(null);
       }
     } catch (error) {
@@ -416,8 +469,8 @@ export function App(): JSX.Element {
     <div className={`app ${isDragOver ? 'drag-over' : ''}`} onClick={() => { setContextMenu(null); setFilterMenu(null); }} onDragEnter={handleDragOver} onDragOver={handleDragOver} onDragLeave={handleDragLeave} onDrop={(event) => void handleDrop(event)}>
       <header className="topbar">
         <div className="brand">beatoraja Manager</div>
-        <button className="icon-text" onClick={chooseRoot} disabled={isAudioConversionBusy} title="beatoraja directory">
-          <Settings size={16} />
+        <button className="icon-text" onClick={chooseRoot} disabled={isAudioConversionBusy} title="Change beatoraja directory">
+          <FolderOpen size={16} />
           <span>{state.beatoraja?.root ?? 'Select beatoraja'}</span>
         </button>
         <select value={state.selectedPlayer?.id ?? ''} disabled={isAudioConversionBusy} onChange={(event) => void selectPlayer(event.target.value)}>
@@ -425,6 +478,9 @@ export function App(): JSX.Element {
         </select>
         <button className="icon-button" onClick={() => void load()} disabled={isAudioConversionBusy} title="Reload">
           <RefreshCw size={16} />
+        </button>
+        <button className="icon-button" onClick={() => setIsSettingsOpen(true)} disabled={isAudioConversionBusy} title="Settings">
+          <Settings size={16} />
         </button>
         <div className="topbar-counts">
           <span>{state.tables.length} tables</span>
@@ -561,6 +617,17 @@ export function App(): JSX.Element {
             <span>Drop chart file</span>
           </div>
         </div>
+      )}
+
+      {isSettingsOpen && (
+        <SettingsDialog
+          beatorajaRoot={state.beatoraja?.root ?? state.settings.beatorajaRoot}
+          reusePreviousImportDestination={state.settings.reusePreviousImportDestination}
+          saving={isSettingsSaving}
+          onChooseRoot={() => void chooseRoot()}
+          onReusePreviousImportDestination={(value) => void setReusePreviousImportDestination(value)}
+          onClose={() => setIsSettingsOpen(false)}
+        />
       )}
 
       {importAnalysis && (
@@ -1160,6 +1227,59 @@ function DuplicateGroupsView({ groups, totalGroups, busyGroupId, onContextMenu, 
           </section>
         );
       })}
+    </div>
+  );
+}
+
+function SettingsDialog({ beatorajaRoot, reusePreviousImportDestination, saving, onChooseRoot, onReusePreviousImportDestination, onClose }: {
+  beatorajaRoot: string;
+  reusePreviousImportDestination: boolean;
+  saving: boolean;
+  onChooseRoot(): void;
+  onReusePreviousImportDestination(value: boolean): void;
+  onClose(): void;
+}): JSX.Element {
+  return (
+    <div className="import-dialog-backdrop" onClick={onClose}>
+      <section className="settings-dialog" onClick={(event) => event.stopPropagation()}>
+        <div className="import-dialog-header">
+          <div>
+            <strong>Settings</strong>
+            <span>Application preferences</span>
+          </div>
+          <button className="icon-button" onClick={onClose} title="Close"><X size={16} /></button>
+        </div>
+
+        <div className="settings-dialog-content">
+          <section className="settings-group">
+            <strong>beatoraja</strong>
+            <div className="settings-path-row">
+              <span title={beatorajaRoot}>{beatorajaRoot || 'Not selected'}</span>
+              <button disabled={saving} onClick={onChooseRoot}><FolderOpen size={14} />Change...</button>
+            </div>
+          </section>
+
+          <section className="settings-group">
+            <strong>Chart Import</strong>
+            <label className="settings-checkbox-row">
+              <input
+                type="checkbox"
+                checked={reusePreviousImportDestination}
+                disabled={saving}
+                onChange={(event) => onReusePreviousImportDestination(event.target.checked)}
+              />
+              <span>
+                <b>Automatically import consecutive variations to the previous destination</b>
+                <small>When the next dropped chart is from the same song, skip destination selection and import it immediately into the previous successful destination.</small>
+              </span>
+            </label>
+          </section>
+        </div>
+
+        <div className="import-dialog-actions">
+          <button onClick={onClose}>Close</button>
+        </div>
+      </section>
     </div>
   );
 }

@@ -3,7 +3,7 @@ import type { AppSettings, AudioConversionResult, AudioFolder, AudioFolderScanUp
 
 contextBridge.exposeInMainWorld('managerApi', {
   loadState: (): Promise<ManagerState> => ipcRenderer.invoke('state:load'),
-  saveSettings: (patch: Partial<AppSettings>): Promise<ManagerState> => ipcRenderer.invoke('settings:save', patch),
+  saveSettings: (patch: Partial<AppSettings>): Promise<AppSettings> => ipcRenderer.invoke('settings:save', patch),
   chooseRoot: (): Promise<string | null> => ipcRenderer.invoke('settings:choose-root'),
   listDirectories: (dirPath: string): Promise<DirectoryNode[]> => ipcRenderer.invoke('directory:list', dirPath),
   listAudioFolders: (): Promise<AudioFolder[]> => ipcRenderer.invoke('audio:list-folders'),

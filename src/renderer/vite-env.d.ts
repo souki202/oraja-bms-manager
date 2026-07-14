@@ -6,7 +6,7 @@ declare global {
   interface Window {
     managerApi: {
       loadState(): Promise<ManagerState>;
-      saveSettings(patch: Partial<AppSettings>): Promise<ManagerState>;
+      saveSettings(patch: Partial<AppSettings>): Promise<AppSettings>;
       chooseRoot(): Promise<string | null>;
       listDirectories(dirPath: string): Promise<DirectoryNode[]>;
       listAudioFolders(): Promise<AudioFolder[]>;
