@@ -7,13 +7,14 @@ import type { ChartColumnFilter, ChartColumnFilters, ChartFilterCache, ChartFilt
 import { clearStatuses, countActiveColumnFilters, isColumnFilterActive, matchesChartFilters, matchesGlobalChartSearch, normalizeSearchQuery, prepareColumnFilters } from '../shared/chartFilters';
 import { countRedundantChartCopies, findDuplicateChartGroups } from '../shared/duplicateCharts';
 import { createSameSongSearchIndex, statusClass } from '../shared/domain';
+import { isKnownBrokenDownloadUrl } from '../shared/downloadLinks';
 import { buildBmsPathExport, buildTableExport } from '../shared/exportTable';
 import { automaticImportSuccessMessage, previousImportDestinationFor } from '../shared/importReuse';
 import type { PreviousChartImport } from '../shared/importReuse';
 import { bokutachiGameForMode, buildStaticIrUrl, canOpenBokutachi, hasAnyIrTarget } from '../shared/ir';
 import type { IrTarget } from '../shared/ir';
 import { buildRowsAsync } from './asyncRows';
-import { chartColumns, createColumnWidthState, defaultSort, emptyColumnFilter, isRowUnderRoot, sortRows, sortTables } from './chartListModel';
+import { chartColumns, chartRowClass, createColumnWidthState, defaultSort, emptyColumnFilter, isRowUnderRoot, sortRows, sortTables } from './chartListModel';
 import type { SortDirection, SortKey, SortState, TableColumn } from './chartListModel';
 import { automaticallyMergedDuplicateGroupIds, duplicateDirectories, duplicateLocationDetails, filterDuplicateGroups, samePathText, shortHash, uniquePaths } from './duplicateGroupModel';
 import { positionContextMenu, positionFilterMenu } from './menuPosition';
@@ -664,8 +665,8 @@ export function App(): JSX.Element {
 
       {contextMenu && (
         <div className={`context-menu submenu-${contextMenu.submenuSide}`} style={{ left: contextMenu.x, top: contextMenu.y }} onClick={(event) => event.stopPropagation()}>
-          <button disabled={!contextMenu.row.url1} onClick={() => openExternalFromMenu(contextMenu.row.url1)}><ExternalLink size={14} />Open URL1</button>
-          <button disabled={!contextMenu.row.url2} onClick={() => openExternalFromMenu(contextMenu.row.url2)}><ExternalLink size={14} />Open URL2</button>
+          <button disabled={!contextMenu.row.url1} onClick={() => openExternalFromMenu(contextMenu.row.url1)}><ExternalLink size={14} />Open URL1{isKnownBrokenDownloadUrl(contextMenu.row.url1) && ' (Broken link)'}</button>
+          <button disabled={!contextMenu.row.url2} onClick={() => openExternalFromMenu(contextMenu.row.url2)}><ExternalLink size={14} />Open URL2{isKnownBrokenDownloadUrl(contextMenu.row.url2) && ' (Broken link)'}</button>
           <button disabled={!contextMenu.row.path && !contextMenu.row.folder} onClick={() => openPathFromMenu(contextMenu.row)}><FolderOpen size={14} />Open in Explorer</button>
           <div className="context-submenu">
             <button disabled={!hasAnyIrTarget(contextMenu.row)}><ExternalLink size={14} /><span>Open IR</span><ChevronRight size={14} /></button>
@@ -674,6 +675,7 @@ export function App(): JSX.Element {
               <button disabled={!contextMenu.row.sha256} onClick={() => void openIrFromMenu(contextMenu.row, 'mocha')}>mocha-repository</button>
               <button disabled={!contextMenu.row.sha256} onClick={() => void openIrFromMenu(contextMenu.row, 'minir')}>MinIR</button>
               <button disabled={!contextMenu.row.md5} onClick={() => void openIrFromMenu(contextMenu.row, 'bms-ir')}>BMS-IR</button>
+              <button disabled={!contextMenu.row.md5.trim()} onClick={() => void openIrFromMenu(contextMenu.row, 'stellaverse')}>STELLAVERSE IR</button>
             </div>
           </div>
           <button onClick={() => { void navigator.clipboard.writeText(contextMenu.row.sha256 || contextMenu.row.md5); setContextMenu(null); }}><Copy size={14} />Copy Hash</button>
@@ -1478,16 +1480,6 @@ function ChartTable({ rows, compact = false, scrollResetKey, sort, columnFilters
   );
 }
 
-function chartRowClass(row: TableChartRow): string {
-  if (row.status !== 'NO SONG') return '';
-  const hasUrl1 = Boolean(row.url1.trim());
-  const hasUrl2 = Boolean(row.url2.trim());
-  if (!hasUrl1 && !hasUrl2) return 'no-song-row no-song-url-none';
-  if (hasUrl1 && !hasUrl2) return 'no-song-row no-song-url-1';
-  if (!hasUrl1 && hasUrl2) return 'no-song-row no-song-url-2';
-  return 'no-song-row no-song-url-both';
-}
-
 function ColumnFilterMenu({ column, filter, x, y, onChange, onClear }: { column: TableColumn; filter: ChartColumnFilter; x: number; y: number; onChange(patch: ChartColumnFilter): void; onClear(): void }): JSX.Element {
   return (
     <div className="filter-menu" style={{ left: x, top: y }} onClick={(event) => event.stopPropagation()}>
@@ -1587,8 +1579,9 @@ function SortIcon({ active, direction }: { active: boolean; direction: SortDirec
 }
 
 function UrlButton({ url }: { url: string }): JSX.Element {
+  const broken = isKnownBrokenDownloadUrl(url);
   return (
-    <button className="url-button" disabled={!url} onClick={() => void window.managerApi.openExternal(url)} title={url || 'No URL'}>
+    <button className={`url-button${broken ? ' broken-link' : ''}`} disabled={!url} onClick={() => void window.managerApi.openExternal(url)} title={broken ? `${url} (Broken link)` : url || 'No URL'}>
       <ExternalLink size={14} />
     </button>
   );

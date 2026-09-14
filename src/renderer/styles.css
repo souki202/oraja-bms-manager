@@ -409,6 +409,7 @@ button, input, select { font: inherit; }
 .path-cell { color: #6a7583; }
 
 .url-button { width: 24px; height: 22px; display: inline-grid; place-items: center; border: 0; background: transparent; color: #111827; cursor: pointer; }
+.url-button.broken-link { color: #c3cbd4; }
 .url-button:disabled { color: #c3cbd4; cursor: default; }
 
 .lamp { display: inline-block; min-width: 88px; padding: 1px 5px; border-radius: 3px; color: #fff; font-weight: 700; font-size: 11px; text-shadow: 0 1px 0 rgba(0,0,0,.2); }

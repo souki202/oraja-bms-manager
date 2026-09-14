@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { createColumnWidthState, isRowUnderRoot, sortRows, sortTables } from '../src/renderer/chartListModel';
+import { chartRowClass, createColumnWidthState, isRowUnderRoot, sortRows, sortTables } from '../src/renderer/chartListModel';
 import type { TableChartRow, TableSummary } from '../src/shared/types';
 
 function row(id: string, overrides: Partial<TableChartRow> = {}): TableChartRow {
@@ -36,6 +36,27 @@ function row(id: string, overrides: Partial<TableChartRow> = {}): TableChartRow 
 }
 
 describe('chart list model', () => {
+  it.each([
+    ['', '', 'none'],
+    ['  ', '  ', 'none'],
+    ['https://example.com/song.zip', '', '1'],
+    ['', 'https://example.com/chart.zip', '2'],
+    ['https://example.com/song.zip', 'https://example.com/chart.zip', 'both'],
+    ['http://www.ribbit.xyz/song.zip', '', 'none'],
+    ['', 'http://www.freett.com/iidxbanzai/chart.zip', 'none'],
+    ['http://www.ribbit.xyz/song.zip', 'http://www.freett.com/iidxbanzai/chart.zip', 'none'],
+    ['http://www.ribbit.xyz/song.zip', 'https://example.com/chart.zip', '2'],
+    ['https://example.com/song.zip', 'http://www.freett.com/iidxbanzai/chart.zip', '1']
+  ])('selects the %s / %s row color as %s', (url1, url2, color) => {
+    expect(chartRowClass(row('chart', { status: 'NO SONG', url1, url2 })))
+      .toBe(`no-song-row no-song-url-${color}`);
+  });
+
+  it('does not apply missing-song colors to installed charts with broken links', () => {
+    expect(chartRowClass(row('chart', { status: 'NO PLAY', url1: 'http://www.ribbit.xyz/' }))).toBe('');
+    expect(chartRowClass(row('chart', { status: 'HARD CLEAR', url2: 'http://www.freett.com/iidxbanzai/' }))).toBe('');
+  });
+
   it('sorts numeric and clear-status columns without mutating the source', () => {
     const source = [
       row('hard', { songLevel: 12, status: 'HARD CLEAR' }),

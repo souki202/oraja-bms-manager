@@ -32,6 +32,10 @@ describe('IR helpers', () => {
     expect(buildStaticIrUrl(chart, 'minir')).toBe('https://www.gaftalk.com/minir/#/viewer/song/abcdef/0');
     expect(buildStaticIrUrl(chart, 'bms-ir')).toBe('https://www.bms-ir.org/new/song?songmd5=751738dea1169c5c39db935adfc9e85f&client_view=all_clients');
     expect(buildStaticIrUrl(row({ sha256: 'ABCDEF' }), 'bms-ir')).toBe('');
+    expect(buildStaticIrUrl(chart, 'stellaverse')).toBe('https://ir.stellabms.xyz/charts/751738dea1169c5c39db935adfc9e85f');
+    expect(buildStaticIrUrl(row({ md5: ` ${'B'.repeat(32)} ` }), 'stellaverse')).toBe(`https://ir.stellabms.xyz/charts/${'b'.repeat(32)}`);
+    expect(buildStaticIrUrl(row({ sha256: 'a'.repeat(64) }), 'stellaverse')).toBe('');
+    expect(buildStaticIrUrl(row({ sha256: 'a'.repeat(64), md5: ' ' }), 'stellaverse')).toBe('');
   });
 
   it('extracts bokutachi chart ids from current and legacy-shaped API responses', () => {

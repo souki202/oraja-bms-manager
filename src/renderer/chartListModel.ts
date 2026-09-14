@@ -1,4 +1,5 @@
 import type { ChartColumnFilter } from '../shared/chartFilters';
+import { hasAvailableDownloadUrl } from '../shared/downloadLinks';
 import type { TableChartRow, TableSummary } from '../shared/types';
 
 export type SortKey = 'level' | 'songLevel' | 'title' | 'artist' | 'url1' | 'url2' | 'status' | 'notes' | 'tableName' | 'path';
@@ -41,6 +42,16 @@ export function sortTables(tables: TableSummary[]): TableSummary[] {
 export function sortRows(rows: TableChartRow[], sort: SortState): TableChartRow[] {
   const direction = sort.direction === 'asc' ? 1 : -1;
   return [...rows].sort((a, b) => compareValues(sortValue(a, sort.key), sortValue(b, sort.key)) * direction);
+}
+
+export function chartRowClass(row: TableChartRow): string {
+  if (row.status !== 'NO SONG') return '';
+  const hasUrl1 = hasAvailableDownloadUrl(row.url1);
+  const hasUrl2 = hasAvailableDownloadUrl(row.url2);
+  if (!hasUrl1 && !hasUrl2) return 'no-song-row no-song-url-none';
+  if (hasUrl1 && !hasUrl2) return 'no-song-row no-song-url-1';
+  if (!hasUrl1 && hasUrl2) return 'no-song-row no-song-url-2';
+  return 'no-song-row no-song-url-both';
 }
 
 export function isRowUnderRoot(row: TableChartRow, root: string): boolean {
