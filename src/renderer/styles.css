@@ -395,7 +395,7 @@ button, input, select { font: inherit; }
 .chart-table tbody tr:nth-child(even) { background: #f7f9fb; }
 .chart-table tbody tr:hover { background: #dbeafe; }
 .chart-table tbody tr.no-song-row { color: #5f4020; --no-song-hover-bg: #ffdfa8; }
-.chart-table tbody tr.no-song-row.no-song-url-none { background: #eed0a8; --no-song-hover-bg: #e8c28a; }
+.chart-table tbody tr.no-song-row.no-song-url-none { background: #ddb585; --no-song-hover-bg: #d3a66e; }
 .chart-table tbody tr.no-song-row.no-song-url-1 { background: #f5dcba; --no-song-hover-bg: #efcc97; }
 .chart-table tbody tr.no-song-row.no-song-url-2 { background: #fae7cd; --no-song-hover-bg: #f3d5a7; }
 .chart-table tbody tr.no-song-row.no-song-url-both { background: #fff7e8; --no-song-hover-bg: #ffe3b1; }

@@ -46,7 +46,12 @@ describe('chart list model', () => {
     ['', 'http://www.freett.com/iidxbanzai/chart.zip', 'none'],
     ['http://www.ribbit.xyz/song.zip', 'http://www.freett.com/iidxbanzai/chart.zip', 'none'],
     ['http://www.ribbit.xyz/song.zip', 'https://example.com/chart.zip', '2'],
-    ['https://example.com/song.zip', 'http://www.freett.com/iidxbanzai/chart.zip', '1']
+    ['https://example.com/song.zip', 'http://www.freett.com/iidxbanzai/chart.zip', '1'],
+    ['http://absolute.pv.land.to/uploader/src/up7207.rar', '', '1'],
+    ['', 'http://gnqg.rosx.net/upload/upload.cgi?get=5950', '2'],
+    ['http://absolute.pv.land.to/uploader/src/up7207.rar', 'http://gnqg.rosx.net/upload/upload.cgi?get=6415', 'both'],
+    ['http://www.ribbit.xyz/song.zip', 'http://gnqg.rosx.net/upload/upload.cgi?get=6476', '2'],
+    ['', 'http://gnqg.rosx.net/upload/upload.cgi?get=6477', 'none']
   ])('selects the %s / %s row color as %s', (url1, url2, color) => {
     expect(chartRowClass(row('chart', { status: 'NO SONG', url1, url2 })))
       .toBe(`no-song-row no-song-url-${color}`);

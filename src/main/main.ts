@@ -3,6 +3,7 @@ import { randomUUID } from 'node:crypto';
 import fs from 'node:fs/promises';
 import path from 'node:path';
 import { ManagerRepository } from './repository';
+import { resolveDownloadUrl } from '../shared/downloadLinks';
 import { extractBokutachiChartId } from '../shared/ir';
 import { convertAudioFolder, findAudioFolders, scanAudioFolders, sortAudioFolders } from './audioConversion';
 import { cleanupBgaFolder, findBgaFolders, scanBgaFolders, sortBgaFolders } from './bgaCleanup';
@@ -221,8 +222,9 @@ ipcMain.handle('ir:resolve-bokutachi', async (_event, payload: BokutachiResolveP
 });
 
 ipcMain.handle('shell:open-external', async (_event, url: string) => {
-  if (!/^https?:\/\//i.test(url) && !/^ipfs:\/\//i.test(url)) return false;
-  await shell.openExternal(url);
+  const targetUrl = resolveDownloadUrl(url);
+  if (!/^https?:\/\//i.test(targetUrl) && !/^ipfs:\/\//i.test(targetUrl)) return false;
+  await shell.openExternal(targetUrl);
   return true;
 });
 

@@ -1,5 +1,70 @@
 import { describe, expect, it } from 'vitest';
-import { hasAvailableDownloadUrl, isKnownBrokenDownloadUrl } from '../src/shared/downloadLinks';
+import { hasAvailableDownloadUrl, isKnownBrokenDownloadUrl, resolveDownloadUrl } from '../src/shared/downloadLinks';
+
+describe('download mirrors', () => {
+  it.each([
+    ['absolute.pv.land.to/uploader/src/up7207.rar', 'https://darksabun.github.io/mirror/absolute/uploader/up7207.rar'],
+    ['absolute.pv.land.to/uploader/src/up123.zip?download=1#file', 'https://darksabun.github.io/mirror/absolute/uploader/up123.zip?download=1#file'],
+    ['gnqg.rosx.net/upload/upload.cgi?get=1', 'https://bms.hexlataia.xyz/mirror/gnqg-upload/00001.zip'],
+    ['gnqg.rosx.net/upload/upload.cgi?get=5950', 'https://bms.hexlataia.xyz/mirror/gnqg-upload/05950.zip'],
+    ['gnqg.rosx.net/upload/upload.cgi?get=05950', 'https://bms.hexlataia.xyz/mirror/gnqg-upload/05950.zip'],
+    ['gnqg.rosx.net/upload/upload.cgi?get=6414', 'https://bms.hexlataia.xyz/mirror/gnqg-upload/06414.zip'],
+    ['gnqg.rosx.net/upload/upload.cgi?get=6415', 'https://darksabun.club/mirror/gnqg-upload/06415.zip'],
+    ['gnqg.rosx.net/upload/upload.cgi?get=6476', 'https://darksabun.club/mirror/gnqg-upload/06476.zip'],
+    ['gnqg.rosx.net/upload/upload.cgi?foo=bar&get=5950#download', 'https://bms.hexlataia.xyz/mirror/gnqg-upload/05950.zip']
+  ])('opens the mirror for %s and considers it available', (source, mirror) => {
+    for (const prefix of ['', '//', 'http://', 'https://']) {
+      const url = `${prefix}${source}`;
+      expect(resolveDownloadUrl(url), url).toBe(mirror);
+      expect(isKnownBrokenDownloadUrl(url), url).toBe(false);
+      expect(hasAvailableDownloadUrl(url), url).toBe(true);
+    }
+    expect(resolveDownloadUrl(mirror)).toBe(mirror);
+  });
+
+  it('uses the same URL normalization for mirrors and broken-link detection', () => {
+    const url = ' HTTPS://WWW.GNQG.ROSX.NET./upload/upload.cgi?get=5950 ';
+    expect(resolveDownloadUrl(url)).toBe('https://bms.hexlataia.xyz/mirror/gnqg-upload/05950.zip');
+    expect(isKnownBrokenDownloadUrl(url)).toBe(false);
+  });
+
+  it.each([
+    'http://absolute.pv.land.to/',
+    'http://absolute.pv.land.to/uploader/src/',
+    'http://absolute.pv.land.to/uploader/up7207.rar',
+    'http://absolute.pv.land.to/uploader/src/nested/up7207.rar',
+    'http://gnqg.rosx.net/',
+    'http://gnqg.rosx.net/other/upload.cgi?get=5950',
+    'http://gnqg.rosx.net/upload/upload.cgi',
+    'http://gnqg.rosx.net/upload/upload.cgi?get=',
+    'http://gnqg.rosx.net/upload/upload.cgi?get=0',
+    'http://gnqg.rosx.net/upload/upload.cgi?get=-1',
+    'http://gnqg.rosx.net/upload/upload.cgi?get=6477',
+    'http://gnqg.rosx.net/upload/upload.cgi?get=10000',
+    'http://gnqg.rosx.net/upload/upload.cgi?get=5950.zip',
+    'http://gnqg.rosx.net/upload/upload.cgi?get=5950.5',
+    'http://gnqg.rosx.net/upload/upload.cgi?get=1e3'
+  ])('keeps unsupported links broken without guessing a mirror: %s', (url) => {
+    expect(resolveDownloadUrl(url)).toBe(url);
+    expect(isKnownBrokenDownloadUrl(url)).toBe(true);
+    expect(hasAvailableDownloadUrl(url)).toBe(false);
+  });
+
+  it.each([
+    '',
+    '   ',
+    'http://',
+    'not a URL',
+    'ipfs://some-hash',
+    'ftp://gnqg.rosx.net/upload/upload.cgi?get=5950',
+    'https://example.com/song.zip',
+    'https://gnqg.rosx.net.example.com/upload/upload.cgi?get=5950',
+    'https://absolute.pv.land.to.example.com/uploader/src/up7207.rar',
+    'https://mirror.example.com/?url=http://gnqg.rosx.net/upload/upload.cgi?get=5950'
+  ])('preserves input without a matching mirror: %s', (url) => {
+    expect(resolveDownloadUrl(url)).toBe(url);
+  });
+});
 
 describe('known broken download links', () => {
   it.each([
